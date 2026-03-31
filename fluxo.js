@@ -10,7 +10,7 @@ const conversaEtapas = new Map();
 const FLUXO = {
   [ETAPAS.SAUDACAO]: {
     instrucao: `ETAPA: SAUDACAO
-Se e a PRIMEIRA mensagem, apresente-se: "Ola! Sou a Laura, do escritorio Neves Pinheiro Lins. Somos especializados em direitos trabalhistas. Me conta, como posso te ajudar?"
+Se e a PRIMEIRA mensagem, apresente-se: "Ola! Sou a Laura, do escritorio NPLADVS. Somos especializados em direitos trabalhistas. Me conta, como posso te ajudar?"
 Se a pessoa JA disse o assunto junto com o oi, mostre que entendeu e pergunte o nome. Nao repita a apresentacao se ja se apresentou.`,
 
     avanca: (text, lead) => {
@@ -136,7 +136,7 @@ ${horariosTexto}
 - Ofereca 2 ou 3 desses horarios para a pessoa escolher
 - Pergunte se prefere presencial (Belem/PA) ou online
 - Se ainda nao tem email, peca agora
-- Quando confirmar: "Perfeito! Consulta marcada pra [dia] as [hora], [formato]. A equipe do Neves Pinheiro Lins vai te atender!"
+- Quando confirmar: "Perfeito! Consulta marcada pra [dia] as [hora], [formato]. A equipe do NPLADVS vai te atender!"
 - NUNCA invente horarios, use SOMENTE os listados acima`;
   }
 
