@@ -30,7 +30,7 @@ module.exports = {
 
   // Identificador do escritório (usado para separar dados no Supabase)
   ESCRITORIO: 'npl',
-  ESCRITORIO_NOME: 'Neves Pinheiro Lins',
+  ESCRITORIO_NOME: 'NPLADVS',
 
   // Buffer de mensagens
   BUFFER_DELAY: 8000,
