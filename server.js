@@ -268,7 +268,7 @@ async function checkFollowUps() {
 
       // 2o FOLLOW-UP: 4h sem resposta
       if (followUpCount === 2 && hoursAgo >= 2 && hoursAgo < 20) {
-        const fixo = `${nome}, aqui e a Laura do escritorio Neves Pinheiro Lins. Passando para saber se posso te ajudar com a sua situacao trabalhista. Temos horarios disponiveis essa semana e a consulta inicial e sem compromisso.`;
+        const fixo = `${nome}, aqui e a Laura do escritorio NPLADVS. Passando para saber se posso te ajudar com a sua situacao trabalhista. Temos horarios disponiveis essa semana e a consulta inicial e sem compromisso.`;
         const msg = await getSmartMsg(fixo, 2);
         console.log(`[FOLLOWUP-NPL-4h] ${conv.telefone} (${nome})`);
         await sendFollowUp(msg, true);
@@ -277,7 +277,7 @@ async function checkFollowUps() {
 
       // 3o FOLLOW-UP: 24h
       if (followUpCount === 3 && hoursAgo >= 20 && hoursAgo < 48) {
-        const fixo = `${nome}, so lembrando que existe um prazo de 2 anos apos sair da empresa para buscar seus direitos trabalhistas. O escritorio Neves Pinheiro Lins pode avaliar o seu caso sem compromisso. Me avisa se tiver interesse.`;
+        const fixo = `${nome}, so lembrando que existe um prazo de 2 anos apos sair da empresa para buscar seus direitos trabalhistas. O escritorio NPLADVS pode avaliar o seu caso sem compromisso. Me avisa se tiver interesse.`;
         const msg = await getSmartMsg(fixo, 3);
         console.log(`[FOLLOWUP-NPL-24h] ${conv.telefone} (${nome})`);
         await sendFollowUp(msg, false);
@@ -286,7 +286,7 @@ async function checkFollowUps() {
 
       // 4o FOLLOW-UP: 72h
       if (followUpCount === 4 && hoursAgo >= 48 && hoursAgo < 96) {
-        const fixo = `${nome}, tudo bem? Aqui e a Laura do escritorio Neves Pinheiro Lins. Essa e a minha ultima mensagem sobre o assunto, nao quero te incomodar. Caso mude de ideia, estamos a disposicao para avaliar os seus direitos. Te desejo tudo de bom.`;
+        const fixo = `${nome}, tudo bem? Aqui e a Laura do escritorio NPLADVS. Essa e a minha ultima mensagem sobre o assunto, nao quero te incomodar. Caso mude de ideia, estamos a disposicao para avaliar os seus direitos. Te desejo tudo de bom.`;
         const msg = await getSmartMsg(fixo, 4);
         console.log(`[FOLLOWUP-NPL-72h] ${conv.telefone} (${nome})`);
         await sendFollowUp(msg, true);
@@ -423,7 +423,7 @@ app.post('/webhook/zapi', async (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'online',
-    escritorio: 'Neves Pinheiro Lins',
+    escritorio: 'NPLADVS',
     assistente: 'Laura',
     foco: 'Trabalhista',
     timestamp: new Date().toISOString(),
@@ -516,7 +516,7 @@ async function enviarRelatorioSemanal() {
     const r = await db.getRelatorioSemanal();
     const hoje = new Date().toLocaleDateString('pt-BR');
 
-    const msg = `Relatorio Semanal - Neves Pinheiro Lins (Trabalhista)
+    const msg = `Relatorio Semanal - NPLADVS (Trabalhista)
 ${hoje}
 
 Novos leads: ${r.leadsNovos}
@@ -577,7 +577,7 @@ app.get('/api/relatorio-semanal', async (req, res) => {
 // ===== INICIAR =====
 app.listen(config.PORT, () => {
   console.log('');
-  console.log('Neves Pinheiro Lins - Servidor (Laura)');
+  console.log('NPLADVS - Servidor (Laura)');
   console.log('Especializado em Direitos Trabalhistas');
   console.log(`Rodando em http://localhost:${config.PORT}`);
   console.log(`Claude: ${config.ANTHROPIC_API_KEY ? 'OK' : 'Faltando'}`);
