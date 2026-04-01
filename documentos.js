@@ -196,7 +196,7 @@ function extensaoDoMime(mimeType) {
 
 // ===== ORGANIZAR DOCUMENTOS DE UM CLIENTE =====
 
-async function organizarDocumentos(phone, nomeCliente) {
+async function organizarDocumentos(phone, nomeCliente, teseInteresse = null) {
   const resultado = {
     cliente: nomeCliente,
     telefone: phone,
@@ -222,8 +222,8 @@ async function organizarDocumentos(phone, nomeCliente) {
       return resultado;
     }
 
-    // 2. Criar estrutura no Google Drive
-    const pastas = await drive.criarEstruturaPastas(nomeCliente);
+    // 2. Criar estrutura no Google Drive (Matéria → Cliente)
+    const pastas = await drive.criarEstruturaPastas(nomeCliente, teseInteresse);
     if (!pastas) {
       resultado.status = 'erro_drive';
       resultado.erros.push('Não foi possível criar pastas no Google Drive');
