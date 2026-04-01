@@ -185,7 +185,7 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
 
     // Gerar e enviar resposta
     const history = await db.getHistory(conversa.id);
-    const rawReply = await ia.generateResponse(history, combinedText, conversa.id, leadAtualizado, contexto);
+    const rawReply = await ia.generateResponse(history, combinedText, conversa.id, leadAtualizado, contexto, phone);
     const reply = ia.trimResponse(rawReply);
     await db.saveMessage(conversa.id, 'assistant', reply);
 
