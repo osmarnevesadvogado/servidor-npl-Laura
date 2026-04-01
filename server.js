@@ -543,10 +543,19 @@ app.post('/api/documentos/organizar', async (req, res) => {
   try {
     if (!documentos) return res.status(503).json({ error: 'Módulo de documentos não disponível' });
 
-    const { phone, nome } = req.body;
+    const { phone, nome, tese } = req.body;
     if (!phone || !nome) return res.status(400).json({ error: 'phone e nome obrigatórios' });
 
-    console.log(`[DOCS-NPL] Organização solicitada: ${nome} (${phone})`);
+    // Buscar tese do lead se não veio no body
+    let teseInteresse = tese || null;
+    if (!teseInteresse) {
+      try {
+        const lead = await db.getOrCreateLead(phone, nome);
+        teseInteresse = lead?.tese_interesse || null;
+      } catch (e) { console.log('[DOCS-NPL] Não encontrou tese do lead'); }
+    }
+
+    console.log(`[DOCS-NPL] Organização solicitada: ${nome} (${phone}) - Matéria: ${teseInteresse || 'não definida'}`);
 
     // Responder imediatamente e processar em background
     res.json({ ok: true, msg: `Organização iniciada para ${nome}. Você receberá o relatório no WhatsApp.` });
@@ -554,7 +563,7 @@ app.post('/api/documentos/organizar', async (req, res) => {
     // Processar em background
     (async () => {
       try {
-        const resultado = await documentos.organizarDocumentos(phone, nome);
+        const resultado = await documentos.organizarDocumentos(phone, nome, teseInteresse);
         const relatorio = documentos.gerarRelatorioWhatsApp(resultado);
 
         // Enviar relatório para Dr. Osmar via WhatsApp
