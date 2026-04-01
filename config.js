@@ -59,6 +59,9 @@ module.exports = {
     POS_AGENDAMENTO: 'pos_agendamento'
   },
 
+  // Google Drive
+  GOOGLE_DRIVE_PASTA_RAIZ: process.env.GOOGLE_DRIVE_PASTA_RAIZ || null,
+
   // Servidor
   PORT: process.env.PORT || 3000,
   RENDER_URL: process.env.RENDER_EXTERNAL_URL
