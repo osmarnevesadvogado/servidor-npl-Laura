@@ -210,10 +210,11 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
           }
         }
       } else {
-        // Primeira busca — só buscar se o nome tem pelo menos 2 palavras (nome completo)
+        // Primeira busca — só buscar se o nome tem pelo menos 2 palavras significativas
+        // A função findClienteProcessoByName já filtra nomes comuns internamente
         const nomeLead = leadAtualizado?.nome;
         if (nomeLead && !nomeLead.startsWith('WhatsApp')) {
-          const palavras = nomeLead.trim().split(/\s+/).filter(p => p.length > 1);
+          const palavras = nomeLead.trim().split(/\s+/).filter(p => p.length > 2);
           if (palavras.length >= 2) {
             try {
               const processos = await db.findClienteProcessoByName(nomeLead);
