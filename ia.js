@@ -1,515 +1,138 @@
-// ===== INTELIGÊNCIA ARTIFICIAL - LAURA (NPL Trabalhista) =====
-// Mesma arquitetura da Ana, personalidade e foco diferentes
-
-const Anthropic = require('@anthropic-ai/sdk');
-const config = require('./config');
-let aprendizado;
-try { aprendizado = require('./aprendizado'); } catch (e) { console.log('[IA-NPL] Modulo aprendizado nao disponivel'); }
-
-const anthropic = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
-
-// ===== PROMPT BASE =====
-const SYSTEM_PROMPT_BASE = `Voce e a Laura, assistente virtual do escritorio NPLADVS, especializado em direitos trabalhistas, em Belem/PA.
-
-TOM E ESTILO:
-- Acolhedora e firme, como uma profissional que entende a dor do trabalhador
-- Sem emojis, nunca
-- Maximo 2-3 frases por mensagem
-- 1 pergunta por vez
-- Use o nome da pessoa sempre que souber
-- Mostre que se importa com a situacao do trabalhador antes de avancar
-- Seu objetivo principal e fazer uma triagem do caso e, se for viavel juridicamente, agendar uma consulta
-
-APRESENTACAO (somente na primeira mensagem da conversa, quando o historico estiver vazio):
-"Ola! Sou a Laura, assistente virtual do escritorio NPLADVS, especializado em direitos trabalhistas. Me conta, o que aconteceu?"
-
-REGRA PRINCIPAL — CHECKLIST DE TRIAGEM:
-Antes de agendar qualquer consulta, voce PRECISA fazer a triagem completa. Consulte a FICHA DO LEAD e siga esta ordem:
-
-1. Falta ASSUNTO? -> Pergunte o que aconteceu / qual a situacao no trabalho
-2. Falta NOME? -> Mostre empatia sobre a situacao + peca o NOME COMPLETO (nome e sobrenome)
-   - Se a pessoa disser so o primeiro nome (ex: "Maria", "Jose"), pergunte gentilmente: "[nome], me passa seu nome completo por gentileza?"
-   - Voce PRECISA do nome completo para verificar se a pessoa ja e cliente do escritorio
-3. Tem NOME + ASSUNTO, mas falta TRIAGEM? -> Faca as perguntas de triagem (UMA por vez):
-   a) "Ha quanto tempo voce trabalhou nessa empresa?" (tempo de trabalho)
-   b) "Tinha carteira assinada?" (vinculo formal)
-   c) "Ha quanto tempo saiu da empresa?" (prazo prescricional — CRITICO: se passou de 2 anos, alertar)
-   d) "Voce tem algum documento como contracheque, contrato ou mensagens?" (provas)
-   e) "Ja procurou outro advogado sobre isso?" (se ja tem representacao)
-   f) "Voce trabalhava para empresa privada, prefeitura ou governo?" (tipo de vinculo — CRITICO)
-   g) Observe se a pessoa demonstra REAL INTERESSE em consultar. Se o lead disser coisas como "nao quero", "so queria saber", "nao tenho interesse", "obrigado mas nao", NAO force agendamento.
-4. TRIAGEM COMPLETA -> Avalie a viabilidade:
-   - VIAVEL: prazo OK (<2 anos), vinculo CLT privado, tempo de trabalho >= 3 meses, problema claro, lead demonstra interesse -> Ofereca agendar consulta
-   - URGENTE: prazo proximo de vencer -> Alerte e agilize o agendamento
-   - NAO AGENDAR - PRESCRICAO: saiu ha MAIS DE 2 ANOS -> Informe com respeito: "[nome], infelizmente o prazo para entrar com acao trabalhista e de 2 anos apos a saida da empresa, e no seu caso esse prazo ja foi ultrapassado. Lamento nao poder ajudar nessa situacao." NAO ofereca consulta.
-   - NAO AGENDAR - PREFEITURA/GOVERNO MUNICIPAL: trabalhou para prefeitura ou orgao municipal -> Informe: "[nome], infelizmente o escritorio e especializado em direitos trabalhistas CLT. Servidores de prefeitura tem um regime juridico diferente e precisam de um advogado especializado em direito administrativo. Desejo sucesso na sua busca."
-   - NAO AGENDAR - VINCULO MUITO CURTO: menos de 3 meses de trabalho -> Informe: "[nome], com menos de 3 meses de vinculo, infelizmente nao conseguimos dar andamento ao caso. Recomendo buscar orientacao no sindicato da sua categoria."
-   - NAO AGENDAR - SEM INTERESSE: lead diz que nao quer, nao tem interesse, ou pede para parar -> Respeite a decisao: "[nome], sem problemas. Caso mude de ideia, estou por aqui. Te desejo tudo de bom."
-   - DUVIDOSO: falta informacao -> Faca mais uma pergunta para esclarecer antes de decidir
-5. Ao agendar, confirme com resumo completo. AGENDAMENTO SO ACONTECE UMA VEZ POR CONVERSA. Se ja agendou, NAO agende novamente no mesmo contato.
-
-EMPATIA POR SITUACAO (use ao descobrir o problema):
-- Demissao/Rescisao: "Entendo, ser demitido e uma situacao muito dificil. Mas voce tem direitos e o escritorio pode avaliar tudo que voce tem a receber."
-- Horas extras: "Compreendo, trabalhar alem do horario sem receber o que e justo nao esta certo. Podemos verificar quanto voce tem a receber."
-- Falta de registro: "Trabalhar sem carteira assinada gera muitos direitos que podem ser cobrados. O escritorio pode calcular tudo isso para voce."
-- Acidente/Doenca: "Sinto muito por essa situacao. Quando o problema e causado pelo trabalho, voce tem direitos importantes que precisam ser garantidos."
-- Assedio: "Isso e muito serio e voce nao precisa aceitar. O escritorio pode te orientar sobre as medidas cabiveis."
-- Salario atrasado: "Ninguem merece ficar sem receber pelo que trabalhou. O escritorio pode te ajudar a resolver isso."
-- FGTS/Multa: "Esses sao direitos seus que nao podem ser ignorados. Podemos verificar se esta tudo correto."
-- Generico: "Entendo a sua situacao. O escritorio pode te orientar sobre seus direitos trabalhistas."
-
-DETECCAO DE SENTIMENTO:
-Observe o tom da mensagem do lead e ajuste:
-- Lead ANSIOSO/REVOLTADO ("absurdo", "injusto", "revoltado", "desesperado") -> Seja acolhedora: "Fique tranquilo(a), [nome]. O escritorio ja ajudou muitos trabalhadores em situacao parecida."
-- Lead DESCONFIADO ("sera que funciona?", "ja fui enganado", "nao confio") -> Seja transparente: "[nome], a consulta inicial e sem compromisso. Voce so decide depois de entender o que pode receber."
-- Lead OBJETIVO/DIRETO (poucas palavras, quer resolver rapido) -> Seja direta tambem, mas ainda faca a triagem.
-- Lead INDECISO ("nao sei", "talvez", "vou ver") -> Conduza gentilmente: "Posso reservar um horario, [nome]. Se mudar de ideia, e so me avisar."
-
-CONTEXTO DE RETORNO:
-Se a secao HISTORICO ANTERIOR estiver presente, o lead ja conversou antes.
-- Demonstre que lembra: "[nome], que bom ter voltado! Da ultima vez conversamos sobre [assunto]."
-- Nao repita perguntas ja respondidas.
-- Retome de onde parou.
-
-REGRAS DE OURO:
-- NUNCA pergunte algo que ja esta na FICHA DO LEAD
-- "Certo", "Isso", "Sim", "Ok" = CONFIRMACAO -> avance para o proximo item que falta
-- Nao repita de volta o que a pessoa disse
-- NAO agende consulta sem antes completar a triagem (nome, problema, tempo, carteira, prazo, tipo de vinculo)
-- BLOQUEIOS ABSOLUTOS (NUNCA agendar nesses casos):
-  * Saiu do emprego ha mais de 2 anos (prescricao bienal)
-  * Trabalhou para prefeitura ou orgao municipal (nao e CLT)
-  * Menos de 3 meses de vinculo empregaticio
-  * Lead disse que NAO quer consulta ou NAO tem interesse
-- Se o lead cair em algum BLOQUEIO, encerre educadamente. NAO tente convencer.
-- NUNCA agende 2 consultas na mesma conversa. Se ja agendou, qualquer pedido adicional responda: "Sua consulta ja esta agendada para [data]. Nos vemos la!"
-- Valor da consulta: "O valor e combinado diretamente na consulta, sem compromisso"
-- Consultas: Seg-Sex, 9h as 12h e 14h as 17h, presencial (Belem/PA) ou online
-- Voce atende mensagens 24h
-- NUNCA mencione email de confirmacao, a confirmacao sera enviada por aqui mesmo no WhatsApp
-- Ao confirmar agendamento, use este formato: "Agendado! Dia [data], as [hora], consulta do(a) Sr(a) [nome] com o escritorio NPLADVS para tratar sobre [assunto trabalhista]. Qualquer duvida, estou por aqui."
-- Sempre conduza para o agendamento de forma natural, sem pressionar. ANALISE se a pessoa realmente quer agendar.
-- Quando falar do escritorio, diga "NPLADVS" ou "o escritorio"
-
-LIDANDO COM OBJECOES:
-- "Preciso pensar" -> "Claro, [nome], sem pressa. Mas saiba que a consulta inicial e sem compromisso, serve justamente para avaliar o que voce tem a receber. Quer que eu reserve um horario e se precisar cancelar e so me avisar?"
-- "E caro?" / "Quanto custa?" -> "O valor e combinado na consulta, sem compromisso. Em muitos casos trabalhistas, o escritorio so cobra se ganhar. Posso verificar um horario essa semana?"
-- "Depois vejo" / "Agora nao posso" -> "Sem problemas, [nome]. So lembre que existe um prazo de 2 anos para entrar com acao trabalhista. Fico por aqui quando precisar."
-- "Ja tenho advogado" -> "Entendo, [nome]. Caso queira uma segunda opiniao especializada em trabalhista, o escritorio pode fazer uma analise sem compromisso."
-
-INFORMACAO IMPORTANTE SOBRE PRAZOS:
-- Prazo prescricional trabalhista: 2 anos apos o termino do contrato para entrar com acao
-- Pode cobrar direitos dos ultimos 5 anos trabalhados
-- Se o lead mencionar que saiu ha mais de 1 ano e meio, alerte sobre a urgencia do prazo
-
-EXEMPLOS:
-
-[FICHA: nome=vazio, assunto=vazio]
-Lead: "oi"
-Laura: "Ola! Sou a Laura, assistente virtual do escritorio NPLADVS, especializado em direitos trabalhistas. Me conta, o que aconteceu?"
-
-[FICHA: nome=vazio, assunto=demissao, triagem=incompleta]
-Lead: "fui demitido e nao recebi nada"
-Laura: "Entendo, ser demitido e uma situacao muito dificil. Mas voce tem direitos e o escritorio pode avaliar tudo que voce tem a receber. Qual o seu nome completo?"
-
-[FICHA: nome=Carlos (so primeiro nome), assunto=demissao, triagem=incompleta]
-Lead: "Carlos"
-Laura: "Carlos, obrigada. Me passa seu nome completo por gentileza? Preciso pra verificar no nosso sistema."
-
-[FICHA: nome=Carlos Mendes, assunto=demissao, triagem=incompleta (falta tempo)]
-Lead: "Carlos Mendes"
-Laura: "Carlos, obrigada. Para eu entender melhor o seu caso, ha quanto tempo voce trabalhava nessa empresa?"
-
-[FICHA: nome=Carlos, assunto=demissao, tempo=3 anos, triagem=incompleta (falta carteira)]
-Lead: "3 anos"
-Laura: "Certo, Carlos. E voce tinha carteira assinada?"
-
-[FICHA: nome=Carlos, assunto=demissao, tempo=3 anos, carteira=sim, triagem=incompleta (falta prazo)]
-Lead: "sim, tinha carteira"
-Laura: "Otimo, isso fortalece o seu caso. Ha quanto tempo voce saiu da empresa?"
-
-[FICHA: nome=Carlos, triagem=completa, viavel=sim, AGENDA: segunda 10h, terca 14h]
-Lead: "sai faz 6 meses"
-Laura: "Carlos, pelo que voce me contou, o seu caso tem boas chances. O escritorio pode avaliar com mais detalhes numa consulta. Temos segunda as 10h ou terca as 14h, qual fica melhor?"
-
-[FICHA: nome=Maria, triagem=completa, prazo=2 anos e 3 meses — BLOQUEIO PRESCRICAO]
-Lead: "sai da empresa faz uns 2 anos e meio"
-Laura: "Maria, infelizmente o prazo para entrar com acao trabalhista e de 2 anos apos a saida da empresa, e no seu caso esse prazo ja foi ultrapassado. Lamento nao poder ajudar nessa situacao. Te desejo tudo de bom."
-
-[FICHA: nome=Jose, assunto=demissao, vinculo=prefeitura — BLOQUEIO PREFEITURA]
-Lead: "eu trabalhava na prefeitura"
-Laura: "Jose, infelizmente o escritorio e especializado em direitos trabalhistas CLT. Servidores de prefeitura tem um regime juridico diferente e precisam de um advogado especializado em direito administrativo. Desejo sucesso na sua busca."
-
-[FICHA: nome=Ana, assunto=demissao, tempo=2 meses — BLOQUEIO VINCULO CURTO]
-Lead: "trabalhei 2 meses la"
-Laura: "Ana, com menos de 3 meses de vinculo, infelizmente nao conseguimos dar andamento ao caso. Recomendo buscar orientacao no sindicato da sua categoria. Te desejo tudo de bom."
-
-[FICHA: nome=Pedro, triagem=completa, lead SEM INTERESSE]
-Lead: "nao obrigado, so queria saber mesmo"
-Laura: "Pedro, sem problemas. Caso mude de ideia, estou por aqui. Te desejo tudo de bom."
-
-[FICHA: nome=Carlos, JA AGENDOU consulta para segunda 10h]
-Lead: "marca outra consulta pra mim terça"
-Laura: "Carlos, sua consulta ja esta agendada para segunda as 10h. Nos vemos la!"`;
-
-
-// ===== MONTAR FICHA DO LEAD =====
-function buildFichaLead(lead, history, contexto) {
-  const linhas = [];
-
-  // === CONTEXTO CRM (se existir) ===
-  if (contexto && contexto.tipo === 'cliente') {
-    const cl = contexto.cliente;
-    const nome = cl.nome_completo || cl.razao_social || '';
-    linhas.push(`ATENCAO: Esta pessoa JA E CLIENTE do escritorio!`);
-    linhas.push(`- Nome no sistema: ${nome}`);
-    linhas.push(`- Tipo: ${cl.tipo || 'PF'} . Status: ${cl.status}`);
-
-    if (contexto.casos.length > 0) {
-      linhas.push(`\nCASOS ATIVOS:`);
-      contexto.casos.forEach(c => {
-        linhas.push(`- ${c.tese} (${c.fase}) ${c.numero_processo ? '. Proc. ' + c.numero_processo : ''}`);
-      });
-    }
-
-    if (contexto.tarefas.length > 0) {
-      linhas.push(`\nTAREFAS PENDENTES DO CLIENTE:`);
-      contexto.tarefas.slice(0, 3).forEach(t => {
-        linhas.push(`- ${t.descricao} . Prazo: ${t.data_limite || 'sem prazo'}`);
-      });
-    }
-
-    if (contexto.financeiro.length > 0) {
-      const totalPendente = contexto.financeiro.reduce((s, f) => s + (f.valor || 0), 0);
-      const atrasados = contexto.financeiro.filter(f => f.status === 'atrasado');
-      linhas.push(`\nFINANCEIRO:`);
-      linhas.push(`- Total pendente: R$ ${totalPendente.toFixed(2)}`);
-      if (atrasados.length > 0) {
-        linhas.push(`- ATRASADO: ${atrasados.length} parcela(s) totalizando R$ ${atrasados.reduce((s, f) => s + (f.valor || 0), 0).toFixed(2)}`);
-      }
-    }
-
-    linhas.push(`\nCOMPORTAMENTO COM CLIENTE:`);
-    linhas.push(`- Trate pelo nome que ja consta no sistema`);
-    linhas.push(`- Nao peca dados que ja existem (nome, telefone, assunto)`);
-    linhas.push(`- Se perguntar sobre seu caso, informe o status geral`);
-    linhas.push(`- Se tiver cobranca atrasada, NAO mencione diretamente. Apenas se o CLIENTE perguntar sobre financeiro, diga gentilmente que existem pendencias`);
-    linhas.push(`- Se quiser agendar nova consulta, prossiga normalmente com a agenda`);
-  } else if (contexto && contexto.tipo === 'cliente_processo_pendente') {
-    // === POSSÍVEL CLIENTE ANTIGO — AGUARDANDO CONFIRMAÇÃO ===
-    const proc = contexto.processos[0];
-    linhas.push(`ATENCAO: O nome desta pessoa COINCIDE com um cliente existente do escritorio!`);
-    linhas.push(`- Nome encontrado na base: ${proc.nome_cliente}`);
-    linhas.push(`- POREM, ainda NAO foi confirmado se e a mesma pessoa.`);
-    linhas.push(``);
-    linhas.push(`COMPORTAMENTO OBRIGATORIO:`);
-    linhas.push(`- Voce DEVE fazer a seguinte pergunta de verificacao (copie EXATAMENTE):`);
-    linhas.push(`  "Verificamos que o seu nome consta em nosso banco de dados. Voce confirma que possui um processo com o escritorio Neves Pinheiro Lins Sociedade de Advogados?"`);
-    linhas.push(`- NAO compartilhe nenhum dado do processo antes da confirmacao`);
-    linhas.push(`- NAO trate como cliente existente ate receber confirmacao`);
-    linhas.push(`- Se a pessoa ja respondeu algo ambiguo, pergunte novamente de forma educada`);
-
-  } else if (contexto && contexto.tipo === 'cliente_processo') {
-    // === CLIENTE ANTIGO (identificado e CONFIRMADO pela planilha de processos) ===
-    const proc = contexto.processos[0];
-    linhas.push(`ATENCAO: Esta pessoa CONFIRMOU ser CLIENTE EXISTENTE do escritorio!`);
-    linhas.push(`- Nome encontrado: ${proc.nome_cliente}`);
-    linhas.push(`- Processos encontrados: ${contexto.processos.length}`);
-
-    linhas.push(`\nDADOS DOS PROCESSOS (use para informar o cliente):`);
-    contexto.processos.forEach((p, i) => {
-      linhas.push(`\n  PROCESSO ${i + 1}:`);
-      linhas.push(`  - Materia: ${p.materia || p.disciplina || 'Trabalhista'}`);
-      if (p.numero_processo) linhas.push(`  - Numero: ${p.numero_processo}`);
-      if (p.parte_contraria) linhas.push(`  - Contra: ${p.parte_contraria}`);
-      linhas.push(`  - Fase: ${p.status_fase.replace(/_/g, ' ')}`);
-      if (p.ultima_movimentacao && p.ultima_movimentacao !== 'X' && p.ultima_movimentacao !== 'x') {
-        linhas.push(`  - Ultima movimentacao: ${p.ultima_movimentacao}`);
-      }
-      if (p.proxima_audiencia && p.proxima_audiencia !== 'X' && p.proxima_audiencia !== 'x') {
-        linhas.push(`  - Proxima audiencia: ${p.proxima_audiencia}`);
-      }
-      if (p.prazos_aberto && p.prazos_aberto !== 'X' && p.prazos_aberto !== 'x') {
-        linhas.push(`  - Prazos em aberto: ${p.prazos_aberto}`);
-      }
-      if (p.local_tribunal) linhas.push(`  - Tribunal: ${p.local_tribunal}`);
-    });
-
-    linhas.push(`\nCOMPORTAMENTO OBRIGATORIO COM CLIENTE EXISTENTE:`);
-    linhas.push(`- Cumprimente pelo nome de forma acolhedora`);
-    linhas.push(`- Informe que voce identificou que ele(a) ja e cliente do escritorio`);
-    linhas.push(`- Compartilhe as informacoes que voce tem: ultima movimentacao, proxima audiencia (se houver), e fase atual`);
-    linhas.push(`- Se o cliente perguntar detalhes juridicos ou duvidas sobre estrategia do caso, diga que vai repassar aos advogados responsaveis para entrarem em contato`);
-    linhas.push(`- NAO invente informacoes. Compartilhe SOMENTE o que esta listado acima nos DADOS DOS PROCESSOS`);
-    linhas.push(`- Se for um assunto NOVO (nao relacionado ao processo existente), trate como lead novo e faca a triagem normalmente`);
-    linhas.push(`- Tom acolhedor e profissional`);
-
-    linhas.push(`\nEXEMPLO DE RESPOSTA:`);
-    linhas.push(`"[Nome], que bom falar com voce! Vi aqui que voce ja e cliente do escritorio NPLADVS. Sobre o seu processo de [materia] contra [parte contraria], a ultima movimentacao foi [info]. [Se tiver audiencia: Sua proxima audiencia esta marcada para [data/info].] Para duvidas mais detalhadas sobre o caso, vou pedir para os advogados responsaveis entrarem em contato. Pode ficar tranquilo(a)!"`);
-
-    linhas.push(`\nPROXIMO PASSO: Informar os dados do processo que voce tem. Para duvidas juridicas, encaminhar aos advogados.`);
-  } else {
-    // Lead normal (nao e cliente)
-    if (lead && lead.nome && !lead.nome.startsWith('WhatsApp')) {
-      linhas.push(`- Nome: ${lead.nome}`);
-    } else {
-      linhas.push(`- Nome: (nao informado ainda)`);
-    }
-
-    linhas.push(`- Assunto: Trabalhista`);
-
-    if (lead && lead.notas) {
-      linhas.push(`- Detalhes: ${lead.notas}`);
-    }
-
-    if (lead && lead.email) {
-      linhas.push(`- Email: ${lead.email}`);
-    }
-  }
-
-  // Verificar se e um retorno
-  if (history && history.length >= 2) {
-    const userMsgs = history.filter(m => m.role === 'user');
-    if (userMsgs.length >= 2) {
-      const temas = [];
-      for (const m of history.slice(0, -1)) {
-        if (m.role === 'user' && m.content.length > 5) {
-          temas.push(m.content.slice(0, 80));
-        }
-      }
-      if (temas.length > 0) {
-        linhas.push(`\nHISTORICO ANTERIOR (lead ja conversou antes):`);
-        linhas.push(`- Mensagens anteriores do lead: "${temas.slice(-3).join('" / "')}"`);
-        linhas.push(`- IMPORTANTE: Demonstre que lembra da conversa anterior. Retome de onde parou.`);
-      }
-    }
-  }
-
-  // Analisar historico para detectar dados de triagem ja coletados
-  const allText = (history || []).map(m => m.content).join(' ').toLowerCase();
-  const temNome = lead && lead.nome && !lead.nome.startsWith('WhatsApp');
-
-  // Detectar respostas de triagem no historico
-  const temTempo = /(\d+\s*(ano|mes|mês)).*(trabalh|empres)/i.test(allText) || /trabalh.{0,20}(\d+\s*(ano|mes|mês))/i.test(allText);
-  const temCarteira = /(carteira|registr|assinad|clt|sem registro|nao tinha|tinha sim|nao tinha)/i.test(allText) && history.length > 2;
-  const temPrazo = /(sa[ií].*faz|sa[ií].*há|sa[ií].*tem|demitid.*faz|demitid.*há|faz.*sa[ií]|há.*sa[ií])/i.test(allText);
-  const temDocumentos = /(documento|contracheque|contrato|comprovante|mensagen|prova|print|foto)/i.test(allText) && history.length > 4;
-  const temAdvogado = /(advogado|advogada|outro advogado|ja procur)/i.test(allText) && history.length > 4;
-
-  const triagemItens = [];
-  if (temTempo) triagemItens.push('tempo de trabalho');
-  if (temCarteira) triagemItens.push('carteira/registro');
-  if (temPrazo) triagemItens.push('prazo desde saida');
-  if (temDocumentos) triagemItens.push('documentos');
-  if (temAdvogado) triagemItens.push('advogado anterior');
-
-  const triagemCompleta = temNome && temTempo && temCarteira && temPrazo;
-  const triagemMinima = temNome && (temTempo || temPrazo); // minimo para avaliar viabilidade
-
-  if (!(contexto && (contexto.tipo === 'cliente' || contexto.tipo === 'cliente_processo' || contexto.tipo === 'cliente_processo_pendente'))) {
-    linhas.push(`\nTRIAGEM:`);
-    if (triagemItens.length > 0) {
-      linhas.push(`- Ja coletado: ${triagemItens.join(', ')}`);
-    }
-    if (!temTempo) linhas.push(`- FALTA: tempo de trabalho na empresa`);
-    if (!temCarteira) linhas.push(`- FALTA: se tinha carteira assinada`);
-    if (!temPrazo) linhas.push(`- FALTA: ha quanto tempo saiu da empresa (CRITICO para prazo)`);
-  }
-
-  // Proximo passo
-  if (contexto && contexto.tipo === 'cliente') {
-    linhas.push(`\nPROXIMO PASSO: E CLIENTE. Atenda conforme o pedido. Se quiser agendar, ofereca horarios.`);
-  } else if (contexto && contexto.tipo === 'cliente_processo') {
-    // Proximo passo ja foi definido no bloco cliente_processo acima, nao sobrescrever
-  } else {
-    let proximoPasso;
-    if (!temNome) {
-      proximoPasso = 'Mostre EMPATIA sobre a situacao + peca o NOME';
-    } else if (!triagemMinima) {
-      proximoPasso = 'Faca a proxima pergunta de TRIAGEM (UMA por vez). Pergunte o que ainda falta na lista acima.';
-    } else if (triagemCompleta) {
-      proximoPasso = 'TRIAGEM COMPLETA. Avalie viabilidade e, se viavel, OFERECA HORARIOS DA AGENDA.';
-    } else {
-      proximoPasso = 'Triagem quase completa. Faca mais uma pergunta do que falta, ou se ja tem info suficiente, avalie viabilidade e ofereca agendar.';
-    }
-
-    linhas.push(`\nPROXIMO PASSO: ${proximoPasso}`);
-  }
-
-  return linhas.join('\n');
-}
-
-// ===== BUSCAR HORÁRIOS DO CALENDÁRIO =====
-// O módulo calendar é injetado via setCalendar() pelo server.js
-let _calendar = null;
-
-function setCalendar(calendarModule) {
-  _calendar = calendarModule;
-  console.log('[IA-NPL] Calendar module configurado');
-}
-
-async function buscarHorarios(phone) {
-  if (!_calendar) {
-    console.log('[IA-NPL] Calendar nao disponivel (modulo nao carregado)');
-    return null;
-  }
-  try {
-    const { texto, slots } = await _calendar.sugerirHorarios(3, phone || null);
-    if (slots.length > 0) {
-      return slots.map(s => `- ${s.label}`).join('\n');
-    }
-  } catch (e) {
-    console.log('[IA-NPL] Erro ao buscar horarios:', e.message);
-  }
-  return null;
-}
-
-// ===== CORTAR RESPOSTAS LONGAS =====
-function trimResponse(text) {
-  let clean = text.replace(/^[\s]*[-•·*]\s*/gm, '').replace(/^[\s]*\d+[.)]\s*/gm, '');
-  clean = clean.replace(/\n{2,}/g, '\n').trim();
-
-  // Remover emojis
-  clean = clean.replace(/[\u{1F300}-\u{1FAF8}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu, '').trim();
-
-  const protected_ = clean
-    .replace(/\b(Dr|Dra|Sr|Sra|Prof|Art|Inc|Ltd|Ltda|nº|tel)\./gi, '$1\u0000')
-    .replace(/(\d)\./g, '$1\u0000')
-    .replace(/\.{3}/g, '\u0001');
-
-  const sentences = protected_.match(/[^.!?]+[.!?]+/g) || [protected_];
-  const restored = sentences.map(s => s.replace(/\u0000/g, '.').replace(/\u0001/g, '...'));
-
-  const result = restored.slice(0, 4).join(' ').trim();
-  if (result.length > 400) {
-    return restored.slice(0, 3).join(' ').trim();
-  }
-  return result;
-}
-
-// ===== HISTÓRICO =====
-function buildRecentHistory(history) {
-  const recent = history.slice(-10);
-  return recent.map(m => ({ role: m.role, content: m.content }));
-}
-
-// ===== GERAR RESPOSTA =====
-async function generateResponse(history, userMessage, conversaId, lead, contexto, phone) {
-  const recentHistory = buildRecentHistory(history);
-  const fichaLead = buildFichaLead(lead, history, contexto);
-  const horariosTexto = await buscarHorarios(phone);
-
-  let agendaSection = '';
-  if (horariosTexto) {
-    agendaSection = `\nAGENDA DISPONIVEL:\n${horariosTexto}\n(Use SOMENTE estes horarios. Nunca invente.)`;
-  } else {
-    agendaSection = `\nAGENDA: Sem horarios carregados. Diga que vai verificar a agenda e retorna.`;
-  }
-
-  const systemPrompt = SYSTEM_PROMPT_BASE;
-
-  // Buscar lições aprendidas de conversas anteriores
-  let licoesTexto = '';
-  if (aprendizado) {
-    try {
-      const licoes = await aprendizado.buscarLicoesRelevantes('triagem', 5);
-      licoesTexto = aprendizado.formatarLicoesParaPrompt(licoes);
-    } catch (e) {
-      console.log('[IA-NPL] Erro ao buscar licoes:', e.message);
-    }
-  }
-
-  const fichaCompleta = `===== FICHA DO LEAD (CONSULTE ANTES DE RESPONDER) =====
-${fichaLead}
-${agendaSection}
-${licoesTexto}
-=========================
-
-Mensagem do lead: "${userMessage}"
-
-LEMBRE: Siga o PROXIMO PASSO indicado na ficha. Nao pergunte o que ja esta preenchido.`;
-
-  console.log(`[IA-NPL] Ficha: ${fichaLead.replace(/\n/g, ' | ')}`);
-
-  const messages = [
-    ...recentHistory,
-    { role: 'user', content: fichaCompleta }
-  ];
-
-  const cleanMessages = [];
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    const prev = cleanMessages[cleanMessages.length - 1];
-    if (prev && prev.role === msg.role) {
-      prev.content += '\n' + msg.content;
-    } else {
-      cleanMessages.push({ ...msg });
-    }
-  }
-
-  if (cleanMessages.length > 0 && cleanMessages[0].role !== 'user') {
-    cleanMessages.unshift({ role: 'user', content: 'Ola' });
-  }
-
-  try {
-    const response = await anthropic.messages.create({
-      model: config.CLAUDE_MODEL,
-      max_tokens: config.MAX_TOKENS,
-      system: systemPrompt,
-      messages: cleanMessages
-    });
-
-    return response.content[0].text;
-  } catch (e) {
-    console.error('[CLAUDE-NPL] Erro:', e.message);
-    return 'Desculpe, estou com uma dificuldade tecnica. Entre em contato pelo telefone do escritorio.';
-  }
-}
-
-// ===== GERAR FOLLOW-UP INTELIGENTE =====
-async function generateFollowUp(history, lead, followUpNumber) {
-  const nome = (lead && lead.nome && !lead.nome.startsWith('WhatsApp')) ? lead.nome : 'amigo(a)';
-  const detalhe = lead?.notas || 'questao trabalhista';
-
-  const userMsgs = (history || []).filter(m => m.role === 'user').map(m => m.content.slice(0, 100));
-  const resumo = userMsgs.length > 0 ? userMsgs.slice(-3).join(' / ') : 'sem mensagens anteriores';
-
-  const prompt = `Voce e a Laura, assistente do escritorio NPLADVS (especializado em trabalhista, Belem/PA).
-O lead "${nome}" conversou com voce sobre "${detalhe}" mas parou de responder.
-Ultimas mensagens do lead: "${resumo}"
-
-Este e o follow-up numero ${followUpNumber}. Gere UMA mensagem curta (2-3 frases) para retomar o contato.
-
-Regras:
-- Sem emojis
-- Use o nome da pessoa
-- Seja acolhedora mas com intencao de agendar consulta
-- ${followUpNumber === 1 ? 'Pergunte se ficou com alguma duvida, seja leve.' : ''}
-- ${followUpNumber === 2 ? 'Seja um pouco mais pessoal, mostre que se importa com a situacao do trabalhador.' : ''}
-- ${followUpNumber === 3 ? 'Use um argumento concreto: mencione o prazo de 2 anos para entrar com acao trabalhista ou que muitos casos o escritorio so cobra se ganhar.' : ''}
-- ${followUpNumber === 4 ? 'Mensagem final, respeitosa. Diga que nao quer incomodar mas esta a disposicao.' : ''}
-- Nao mencione email. A confirmacao e por WhatsApp.
-- Termine sempre conduzindo para o agendamento.`;
-
-  try {
-    const response = await anthropic.messages.create({
-      model: config.CLAUDE_MODEL,
-      max_tokens: 150,
-      messages: [{ role: 'user', content: prompt }]
-    });
-
-    const reply = trimResponse(response.content[0].text);
-    console.log(`[FOLLOWUP-NPL] Gerado para ${nome}: "${reply.slice(0, 60)}..."`);
-    return reply;
-  } catch (e) {
-    console.error('[FOLLOWUP-NPL] Erro:', e.message);
-    return null;
-  }
-}
-
-module.exports = {
-  generateResponse,
-  generateFollowUp,
-  trimResponse,
-  setCalendar
-};
+2026-04-02T17:56:12.748157185Z [CALENDAR-NPL] 12 eventos encontrados no período
+2026-04-02T17:56:12.748498442Z [CALENDAR-NPL] 14 slots disponíveis
+2026-04-02T17:56:12.748507742Z [CALENDAR-NPL] Slot reservado: 2026-04-06T17:00:00.000Z para 557488191532 (10min)
+2026-04-02T17:56:12.748514192Z [CALENDAR-NPL] Slot reservado: 2026-04-07T12:00:00.000Z para 557488191532 (10min)
+2026-04-02T17:56:12.748547583Z [CALENDAR-NPL] Slot reservado: 2026-04-07T17:00:00.000Z para 557488191532 (10min)
+2026-04-02T17:56:12.992652645Z [IA-NPL] Ficha: - Nome: Joao Alder | - Assunto: Trabalhista |  | HISTORICO ANTERIOR (lead ja conversou antes): | - Mensagens anteriores do lead: "Olá! Trabalho sem carteira assinada e quero mais informações." / "2 anos" | - IMPORTANTE: Demonstre que lembra da conversa anterior. Retome de onde parou. |  | TRIAGEM: | - Ja coletado: tempo de trabalho, carteira/registro | - FALTA: ha quanto tempo saiu da empresa (CRITICO para prazo) |  | PROXIMO PASSO: Triagem quase completa. Faca mais uma pergunta do que falta, ou se ja tem info suficiente, avalie viabilidade e ofereca agendar.
+2026-04-02T17:56:15.640295892Z [ZAPI-NPL] Mensagem enviada: 557488191532
+2026-04-02T17:56:15.640321242Z [REPLY-NPL] Para 557488191532: Certo, Joao.   Como ainda esta na empresa, precisamos entender melhor a situacao...
+2026-04-02T17:56:35.126951303Z [MSG-NPL] De: 557488191532 (Joao Alder): Falta de benefícios
+2026-04-02T17:56:41.131842388Z [BUFFER-NPL] Processando 1 msg(s) de 557488191532
+2026-04-02T17:56:43.369653201Z [CALENDAR-NPL] Hora Belém: 14h
+2026-04-02T17:56:43.369681891Z [CALENDAR-NPL] Buscando eventos de 2026-04-02T12:00:00.000Z até 2026-04-09T20:00:00.000Z
+2026-04-02T17:56:43.822168055Z [CALENDAR-NPL] 12 eventos encontrados no período
+2026-04-02T17:56:43.822221526Z [CALENDAR-NPL] 14 slots disponíveis
+2026-04-02T17:56:43.822244587Z [CALENDAR-NPL] Slot reservado: 2026-04-06T17:00:00.000Z para 557488191532 (10min)
+2026-04-02T17:56:43.822252137Z [CALENDAR-NPL] Slot reservado: 2026-04-07T12:00:00.000Z para 557488191532 (10min)
+2026-04-02T17:56:43.822256307Z [CALENDAR-NPL] Slot reservado: 2026-04-07T17:00:00.000Z para 557488191532 (10min)
+2026-04-02T17:56:44.046837358Z [IA-NPL] Ficha: - Nome: Joao Alder | - Assunto: Trabalhista |  | HISTORICO ANTERIOR (lead ja conversou antes): | - Mensagens anteriores do lead: "Olá! Trabalho sem carteira assinada e quero mais informações." / "2 anos" / "Ainda estou" | - IMPORTANTE: Demonstre que lembra da conversa anterior. Retome de onde parou. |  | TRIAGEM: | - Ja coletado: tempo de trabalho, carteira/registro | - FALTA: ha quanto tempo saiu da empresa (CRITICO para prazo) |  | PROXIMO PASSO: Triagem quase completa. Faca mais uma pergunta do que falta, ou se ja tem info suficiente, avalie viabilidade e ofereca agendar.
+2026-04-02T17:56:48.818720556Z [ZAPI-NPL] Mensagem enviada: 557488191532
+2026-04-02T17:56:48.818764997Z [REPLY-NPL] Para 557488191532: Compreendo, Joao.  Falta de beneficios como FGTS, vale refeicao, vale transporte...
+2026-04-02T17:57:20.738374027Z [MSG-NPL] De: 557488191532 (Joao Alder): Vou contar a situação
+2026-04-02T17:57:26.738794452Z [BUFFER-NPL] Processando 1 msg(s) de 557488191532
+2026-04-02T17:57:28.759918002Z [CALENDAR-NPL] Hora Belém: 14h
+2026-04-02T17:57:28.759955723Z [CALENDAR-NPL] Buscando eventos de 2026-04-02T12:00:00.000Z até 2026-04-09T20:00:00.000Z
+2026-04-02T17:57:29.196928432Z [CALENDAR-NPL] 12 eventos encontrados no período
+2026-04-02T17:57:29.197085575Z [CALENDAR-NPL] 14 slots disponíveis
+2026-04-02T17:57:29.197117906Z [CALENDAR-NPL] Slot reservado: 2026-04-06T17:00:00.000Z para 557488191532 (10min)
+2026-04-02T17:57:29.197124636Z [CALENDAR-NPL] Slot reservado: 2026-04-07T12:00:00.000Z para 557488191532 (10min)
+2026-04-02T17:57:29.197127926Z [CALENDAR-NPL] Slot reservado: 2026-04-07T17:00:00.000Z para 557488191532 (10min)
+2026-04-02T17:57:29.504911198Z [IA-NPL] Ficha: - Nome: Joao Alder | - Assunto: Trabalhista |  | HISTORICO ANTERIOR (lead ja conversou antes): | - Mensagens anteriores do lead: "2 anos" / "Ainda estou" / "Falta de benefícios" | - IMPORTANTE: Demonstre que lembra da conversa anterior. Retome de onde parou. |  | TRIAGEM: | - Ja coletado: tempo de trabalho, carteira/registro, documentos | - FALTA: ha quanto tempo saiu da empresa (CRITICO para prazo) |  | PROXIMO PASSO: Triagem quase completa. Faca mais uma pergunta do que falta, ou se ja tem info suficiente, avalie viabilidade e ofereca agendar.
+2026-04-02T17:57:31.130273724Z [ZAPI-NPL] Mensagem enviada: 557488191532
+2026-04-02T17:57:31.130299494Z [REPLY-NPL] Para 557488191532: Claro, Joao.   Fico atenta para ouvir sua situacao com atencao....
+2026-04-02T17:58:05.833812531Z [MSG-NPL] De: 557488191532 (Joao Alder): Tenho um valor fixo no valor de 3.000,00
+2026-04-02T17:58:05.833845061Z Mais comissão de vendas
+2026-04-02T17:58:10.792730249Z [PAUSE-NPL] IA pausada para 557488191532 por 30 min
+2026-04-02T17:58:10.79278067Z [MANUAL-NPL] Atendente respondeu para 557488191532 - IA pausada 30min
+2026-04-02T17:58:11.83466154Z [BUFFER-NPL] Processando 2 msg(s) de 557488191532
+2026-04-02T17:58:13.927881639Z [CALENDAR-NPL] Hora Belém: 14h
+2026-04-02T17:58:13.92791029Z [CALENDAR-NPL] Buscando eventos de 2026-04-02T12:00:00.000Z até 2026-04-09T20:00:00.000Z
+2026-04-02T17:58:14.42123616Z [CALENDAR-NPL] 12 eventos encontrados no período
+2026-04-02T17:58:14.421362422Z [CALENDAR-NPL] 17 slots disponíveis
+2026-04-02T17:58:14.421400233Z [CALENDAR-NPL] Slot reservado: 2026-04-06T17:00:00.000Z para 557488191532 (10min)
+2026-04-02T17:58:14.421407083Z [CALENDAR-NPL] Slot reservado: 2026-04-07T12:00:00.000Z para 557488191532 (10min)
+2026-04-02T17:58:14.421409853Z [CALENDAR-NPL] Slot reservado: 2026-04-07T17:00:00.000Z para 557488191532 (10min)
+2026-04-02T17:58:14.646499573Z [IA-NPL] Ficha: - Nome: Joao Alder | - Assunto: Trabalhista |  | HISTORICO ANTERIOR (lead ja conversou antes): | - Mensagens anteriores do lead: "Ainda estou" / "Falta de benefícios" / "Vou contar a situação" | - IMPORTANTE: Demonstre que lembra da conversa anterior. Retome de onde parou. |  | TRIAGEM: | - Ja coletado: tempo de trabalho, carteira/registro, documentos | - FALTA: ha quanto tempo saiu da empresa (CRITICO para prazo) |  | PROXIMO PASSO: Triagem quase completa. Faca mais uma pergunta do que falta, ou se ja tem info suficiente, avalie viabilidade e ofereca agendar.
+2026-04-02T17:58:17.129207048Z [ZAPI-NPL] Mensagem enviada: 557488191532
+2026-04-02T17:58:17.129234549Z [REPLY-NPL] Para 557488191532: Entendo, Joao.   Entao voce recebe um fixo de 3 mil mais comissao, mas sem carte...
+2026-04-02T17:58:40.769203944Z [PAUSE-NPL] IA pausada para 557488191532 por 30 min
+2026-04-02T17:58:40.769230905Z [MANUAL-NPL] Atendente respondeu para 557488191532 - IA pausada 30min
+2026-04-02T17:58:48.201474265Z [PAUSE-NPL] Msg de 557488191532 salva - IA pausada
+2026-04-02T17:59:30.734695026Z /opt/render/project/src/server.js:529
+2026-04-02T17:59:30.734723177Z   const belemDay = parseInt(now.toLocaleString('en-US', { timeZone: 'America/Belem', weekday: 'numeric' }));
+2026-04-02T17:59:30.734731717Z                                 ^
+2026-04-02T17:59:30.734736407Z 
+2026-04-02T17:59:30.734740687Z RangeError: Value numeric out of range for Date.prototype.toLocaleString options property weekday
+2026-04-02T17:59:30.734744507Z     at Date.toLocaleString (<anonymous>)
+2026-04-02T17:59:30.734749907Z     at Timeout._onTimeout (/opt/render/project/src/server.js:529:33)
+2026-04-02T17:59:30.734755027Z     at listOnTimeout (node:internal/timers:605:17)
+2026-04-02T17:59:30.734758827Z     at process.processTimers (node:internal/timers:541:7)
+2026-04-02T17:59:30.734762248Z 
+2026-04-02T17:59:30.734766477Z Node.js v25.9.0
+2026-04-02T17:59:32.971744787Z ==> Running 'node server.js'
+2026-04-02T17:59:35.040303106Z [IA-NPL] Calendar module configurado
+2026-04-02T17:59:35.040490799Z [INIT-NPL] Calendar OK
+2026-04-02T17:59:35.042897075Z [INIT-NPL] Documentos OK
+2026-04-02T17:59:35.042912025Z [INIT-NPL] Aprendizado OK
+2026-04-02T17:59:35.046457843Z 
+2026-04-02T17:59:35.046482323Z NPLADVS - Servidor (Laura)
+2026-04-02T17:59:35.046490743Z Especializado em Direitos Trabalhistas
+2026-04-02T17:59:35.046496003Z Rodando em http://localhost:10000
+2026-04-02T17:59:35.046502193Z Claude: OK
+2026-04-02T17:59:35.046627336Z Z-API: OK
+2026-04-02T17:59:35.046637566Z Supabase: OK
+2026-04-02T17:59:35.046655216Z OpenAI: OK (audio ativo)
+2026-04-02T17:59:35.046659516Z Relatorio semanal: Segunda 8h30 (Belem) via WhatsApp
+2026-04-02T17:59:35.046670027Z Webhook: POST https://servidor-npl.onrender.com/webhook/zapi
+2026-04-02T17:59:35.046673136Z 
+2026-04-02T18:00:07.045477117Z [MSG-NPL] De: 557488191532 (Joao Alder): Os outros benefícios não tenho
+2026-04-02T18:00:13.051040853Z [BUFFER-NPL] Processando 1 msg(s) de 557488191532
+2026-04-02T18:00:16.394263963Z [CALENDAR-NPL] Hora Belém: 15h
+2026-04-02T18:00:16.394393365Z [CALENDAR-NPL] Buscando eventos de 2026-04-02T12:00:00.000Z até 2026-04-09T20:00:00.000Z
+2026-04-02T18:00:16.915591674Z [CALENDAR-NPL] 12 eventos encontrados no período
+2026-04-02T18:00:16.916026862Z [CALENDAR-NPL] 17 slots disponíveis
+2026-04-02T18:00:16.916236366Z [CALENDAR-NPL] Slot reservado: 2026-04-06T17:00:00.000Z para 557488191532 (10min)
+2026-04-02T18:00:16.916269767Z [CALENDAR-NPL] Slot reservado: 2026-04-07T12:00:00.000Z para 557488191532 (10min)
+2026-04-02T18:00:16.916274527Z [CALENDAR-NPL] Slot reservado: 2026-04-07T17:00:00.000Z para 557488191532 (10min)
+2026-04-02T18:00:17.527757642Z [IA-NPL] Ficha: - Nome: Joao Alder | - Assunto: Trabalhista |  | HISTORICO ANTERIOR (lead ja conversou antes): | - Mensagens anteriores do lead: "Vou contar a situação" / "Tenho um valor fixo no valor de 3.000,00 | Mais comissão de vendas" / "Tenho cartão corporativo da empresa no valor de 500,00 para refeição" | - IMPORTANTE: Demonstre que lembra da conversa anterior. Retome de onde parou. |  | TRIAGEM: | - Ja coletado: tempo de trabalho, carteira/registro, documentos | - FALTA: ha quanto tempo saiu da empresa (CRITICO para prazo) |  | PROXIMO PASSO: Triagem quase completa. Faca mais uma pergunta do que falta, ou se ja tem info suficiente, avalie viabilidade e ofereca agendar.
+2026-04-02T18:00:20.338703662Z [ZAPI-NPL] Mensagem enviada: 557488191532
+2026-04-02T18:00:20.338740723Z [REPLY-NPL] Para 557488191532: Joao, entendo.    Voce tem o cartao de refeicao, mas falta FGTS, vale transporte...
+2026-04-02T18:00:37.593349936Z [FOLLOWUP-NPL] Gerado para Noelle_Rodrigo: "Oi Noelle, tudo bem?  Ficou com alguma dúvida sobre a sua qu..."
+2026-04-02T18:00:37.593378367Z [FOLLOWUP-NPL-2h] 5528999672772 (Noelle_Rodrigo)
+2026-04-02T18:00:38.195339981Z [ZAPI-NPL] Mensagem enviada: 5528999672772
+2026-04-02T18:00:40.156075016Z [FOLLOWUP-NPL] Gerado para Darley paixao 😋: "Oi Darley!  Tudo bem?  Ficou com alguma dúvida sobre a quest..."
+2026-04-02T18:00:40.156099017Z [FOLLOWUP-NPL-2h] 559185742953 (Darley paixao 😋)
+2026-04-02T18:00:40.3466598Z [ZAPI-NPL] Mensagem enviada: 559185742953
+2026-04-02T18:00:42.212846338Z [FOLLOWUP-NPL] Gerado para Lipzin_7: "Olá Lipzin_7, tudo bem?  Ficou com alguma dúvida sobre os se..."
+2026-04-02T18:00:42.212873589Z [FOLLOWUP-NPL-2h] 5515997224277 (Lipzin_7)
+2026-04-02T18:00:42.404566453Z [ZAPI-NPL] Mensagem enviada: 5515997224277
+2026-04-02T18:01:35.487019849Z [CALENDAR-NPL] 5 consulta(s) hoje
+2026-04-02T18:02:08.170452595Z [MSG-NPL] De: 557488191532 (Joao Alder): Sigo as normas da empresa, participo das reuniões, uso carro da empresa plotado,
+2026-04-02T18:02:14.174549986Z [BUFFER-NPL] Processando 1 msg(s) de 557488191532
+2026-04-02T18:02:15.245575732Z [FLUXO-NPL] b1deffac-bdcf-4caa-9949-b0333896d78a: proposta -> agendamento
+2026-04-02T18:02:16.87898351Z [CALENDAR-NPL] Hora Belém: 15h
+2026-04-02T18:02:16.879081412Z [CALENDAR-NPL] Buscando eventos de 2026-04-02T12:00:00.000Z até 2026-04-09T20:00:00.000Z
+2026-04-02T18:02:17.329146421Z [CALENDAR-NPL] 12 eventos encontrados no período
+2026-04-02T18:02:17.329275323Z [CALENDAR-NPL] 17 slots disponíveis
+2026-04-02T18:02:17.329366565Z [CALENDAR-NPL] Slot reservado: 2026-04-06T17:00:00.000Z para 557488191532 (10min)
+2026-04-02T18:02:17.329373875Z [CALENDAR-NPL] Slot reservado: 2026-04-07T12:00:00.000Z para 557488191532 (10min)
+2026-04-02T18:02:17.329377915Z [CALENDAR-NPL] Slot reservado: 2026-04-07T17:00:00.000Z para 557488191532 (10min)
+2026-04-02T18:02:17.61020345Z [IA-NPL] Ficha: - Nome: Joao Alder | - Assunto: Trabalhista |  | HISTORICO ANTERIOR (lead ja conversou antes): | - Mensagens anteriores do lead: "Tenho um valor fixo no valor de 3.000,00 | Mais comissão de vendas" / "Tenho cartão corporativo da empresa no valor de 500,00 para refeição" / "Os outros benefícios não tenho" | - IMPORTANTE: Demonstre que lembra da conversa anterior. Retome de onde parou. |  | TRIAGEM: | - Ja coletado: tempo de trabalho, carteira/registro, documentos | - FALTA: ha quanto tempo saiu da empresa (CRITICO para prazo) |  | PROXIMO PASSO: Triagem quase completa. Faca mais uma pergunta do que falta, ou se ja tem info suficiente, avalie viabilidade e ofereca agendar.
+2026-04-02T18:02:20.490928483Z [ZAPI-NPL] Mensagem enviada: 557488191532
+2026-04-02T18:02:20.490961914Z [REPLY-NPL] Para 557488191532: Joao, isso que voce descreveu deixa muito claro que voce e um funcionario da emp...
+2026-04-02T18:02:32.004944713Z [MSG-NPL] De: 559185800709 (Henri): ???
+2026-04-02T18:02:38.006277826Z [BUFFER-NPL] Processando 1 msg(s) de 559185800709
+2026-04-02T18:02:39.573046915Z [CLIENTE-ANTIGO-NPL] Matheus Henrique Amaral Pereira encontrado na base (1 processo(s)) — aguardando confirmação
+2026-04-02T18:02:39.80176207Z [CALENDAR-NPL] Hora Belém: 15h
+2026-04-02T18:02:39.801786381Z [CALENDAR-NPL] Buscando eventos de 2026-04-02T12:00:00.000Z até 2026-04-09T20:00:00.000Z
+2026-04-02T18:02:40.22158482Z [CALENDAR-NPL] 12 eventos encontrados no período
+2026-04-02T18:02:40.221740752Z [CALENDAR-NPL] 14 slots disponíveis
+2026-04-02T18:02:40.221790143Z [CALENDAR-NPL] Slot reservado: 2026-04-06T18:00:00.000Z para 559185800709 (10min)
+2026-04-02T18:02:40.221795493Z [CALENDAR-NPL] Slot reservado: 2026-04-07T13:00:00.000Z para 559185800709 (10min)
+2026-04-02T18:02:40.221801673Z [CALENDAR-NPL] Slot reservado: 2026-04-07T18:00:00.000Z para 559185800709 (10min)
+2026-04-02T18:02:40.445733127Z [IA-NPL] Ficha: ATENCAO: O nome desta pessoa COINCIDE com um cliente existente do escritorio! | - Nome encontrado na base: MATHEUS HENRIQUE AMARAL PEREIRA | - POREM, ainda NAO foi confirmado se e a mesma pessoa. |  | COMPORTAMENTO OBRIGATORIO: | - Voce DEVE fazer a seguinte pergunta de verificacao (copie EXATAMENTE): |   "Verificamos que o seu nome consta em nosso banco de dados. Voce confirma que possui um processo com o escritorio Neves Pinheiro Lins Sociedade de Advogados?" | - NAO compartilhe nenhum dado do processo antes da confirmacao | - NAO trate como cliente existente ate receber confirmacao | - Se a pessoa ja respondeu algo ambiguo, pergunte novamente de forma educada |  | HISTORICO ANTERIOR (lead ja conversou antes): | - Mensagens anteriores do lead: "Aguardando a Reunião" / "Boa tarde" / "Estou aguardando a Reunião" | - IMPORTANTE: Demonstre que lembra da conversa anterior. Retome de onde parou. |  | PROXIMO PASSO: TRIAGEM COMPLETA. Avalie viabilidade e, se viavel, OFERECA HORARIOS DA AGENDA.
+2026-04-02T18:02:42.432326965Z [ZAPI-NPL] Mensagem enviada: 559185800709
+2026-04-02T18:02:42.432353346Z [REPLY-NPL] Para 559185800709: Matheus, peço desculpas pela confusão nas mensagens anteriores.      Deixa eu es...
+2026-04-02T18:02:53.598293783Z [MSG-NPL] De: 557488191532 (Joao Alder): Tem alguns colegas na mesma função que eu que tem salário melhor e benefícios, q
+2026-04-02T18:02:59.60222601Z [BUFFER-NPL] Processando 1 msg(s) de 557488191532
+2026-04-02T18:03:00.532551636Z [LEAD-NPL] Dados extraídos para 4792a93c-4093-4bae-ae85-dfeb93c23120: notas, atualizado_em
+2026-04-02T18:03:01.864774868Z [CALENDAR-NPL] Hora Belém: 15h
+2026-04-02T18:03:01.864802598Z [CALENDAR-NPL] Buscando eventos de 2026-04-02T12:00:00.000Z até 2026-04-09T20:00:00.000Z
+2026-04-02T18:03:02.27175957Z [CALENDAR-NPL] 12 eventos encontrados no período
+2026-04-02T18:03:02.271871012Z [CALENDAR-NPL] 14 slots disponíveis
+2026-04-02T18:03:02.271895563Z [CALENDAR-NPL] Slot reservado: 2026-04-06T17:00:00.000Z para 557488191532 (10min)
+2026-04-02T18:03:02.271912573Z [CALENDAR-NPL] Slot reservado: 2026-04-07T12:00:00.000Z para 557488191532 (10min)
+2026-04-02T18:03:02.271919713Z [CALENDAR-NPL] Slot reservado: 2026-04-07T17:00:00.000Z para 557488191532 (10min)
+2026-04-02T18:03:02.489722229Z [IA-NPL] Ficha: - Nome: Joao Alder | - Assunto: Trabalhista |  | HISTORICO ANTERIOR (lead ja conversou antes): | - Mensagens anteriores do lead: "Tenho cartão corporativo da empresa no valor de 500,00 para refeição" / "Os outros benefícios não tenho" / "Sigo as normas da empresa, participo das reuniões, uso carro da empresa plotado," | - IMPORTANTE: Demonstre que lembra da conversa anterior. Retome de onde parou. |  | TRIAGEM: | - Ja coletado: tempo de trabalho, carteira/registro, documentos | - FALTA: ha quanto tempo saiu da empresa (CRITICO para prazo) |  | PROXIMO PASSO: Triagem quase completa. Faca mais uma pergunta do que falta, ou se ja tem info suficiente, avalie viabilidade e ofereca agendar.
+2026-04-02T18:03:04.927907743Z [ZAPI-NPL] Mensagem enviada: 557488191532
+2026-04-02T18:03:04.927940034Z [REPLY-NPL] Para 557488191532: Joao, isso e um sinal muito forte.     Se seus colegas fazem exatamente o mesmo ...
