@@ -6,13 +6,26 @@
 // Lock contra agendamentos duplicados
 
 const { google } = require('googleapis');
+const config = require('./config');
 
 // Configurar autenticação com Service Account
 function getCalendarClient() {
-  const credentials = JSON.parse(process.env.GOOGLE_CALENDAR_CREDENTIALS || '{}');
+  const credStr = config.GOOGLE_CALENDAR_CREDENTIALS;
+  if (!credStr) {
+    console.error('[CALENDAR-NPL] GOOGLE_CALENDAR_CREDENTIALS não configurada');
+    return null;
+  }
 
-  if (!credentials.client_email) {
-    console.error('[CALENDAR-NPL] Credenciais não configuradas');
+  let credentials;
+  try {
+    credentials = JSON.parse(credStr);
+  } catch (e) {
+    console.error('[CALENDAR-NPL] Erro ao parsear credenciais:', e.message);
+    return null;
+  }
+
+  if (!credentials.client_email || !credentials.private_key) {
+    console.error('[CALENDAR-NPL] Credenciais incompletas (falta client_email ou private_key)');
     return null;
   }
 
@@ -27,7 +40,7 @@ function getCalendarClient() {
 }
 
 // ID da agenda "Consultas NPL - Laura"
-const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID || '2ecec3ace4e9b7aa38e59c36dd08a622e7a5a1a137176f8e3cf8a4a740b6e7cc@group.calendar.google.com';
+const CALENDAR_ID = config.GOOGLE_CALENDAR_ID;
 
 // Horário comercial (em horário de Belém) — COM intervalo de almoço
 const HORARIOS_MANHA = { inicio: 8, fim: 12 };  // 08h às 12h
