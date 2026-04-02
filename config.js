@@ -33,7 +33,7 @@ module.exports = {
   ESCRITORIO_NOME: 'NPLADVS',
 
   // Buffer de mensagens
-  BUFFER_DELAY: 8000,
+  BUFFER_DELAY: 6000,
 
   // Rate limit
   RATE_LIMIT_MAX: 30,
@@ -58,6 +58,10 @@ module.exports = {
     AGENDAMENTO: 'agendamento',
     POS_AGENDAMENTO: 'pos_agendamento'
   },
+
+  // Google Calendar
+  GOOGLE_CALENDAR_ID: process.env.GOOGLE_CALENDAR_ID || '2ecec3ace4e9b7aa38e59c36dd08a622e7a5a1a137176f8e3cf8a4a740b6e7cc@group.calendar.google.com',
+  GOOGLE_CALENDAR_CREDENTIALS: process.env.GOOGLE_CALENDAR_CREDENTIALS || null,
 
   // Google Drive
   GOOGLE_DRIVE_PASTA_RAIZ: process.env.GOOGLE_DRIVE_PASTA_RAIZ || null,
