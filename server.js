@@ -679,8 +679,8 @@ app.post('/webhook/zapi', async (req, res) => {
     const phone = body.phone || body.from?.replace('@c.us', '') || '';
     const text = body.text?.message || body.body || '';
     const senderName = body.senderName || body.notifyName || '';
-    const isAudio = body.isAudio || body.audio || body.audioMessage || (body.type === 'ReceivedCallback' && body.audio);
-    const audioUrl = body.audio?.audioUrl || body.audioMessage?.url || body.audio?.url || body.mediaUrl || null;
+    const audioUrl = body.audio?.audioUrl || body.audioMessage?.url || body.audio?.url || null;
+    const isAudio = body.isAudio === true || !!body.audioMessage || (!!audioUrl && audioUrl.length > 10);
 
     // Se for audio, transcrever antes de processar
     if (isAudio || audioUrl) {
