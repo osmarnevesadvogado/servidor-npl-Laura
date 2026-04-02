@@ -150,6 +150,16 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
 
     console.log(`[BUFFER-NPL] Processando ${combinedText.split('\n').length} msg(s) de ${phone}`);
 
+    // Verificar pausa ANTES de processar (pode ter sido pausada enquanto buffered)
+    if (isAIPaused(phone)) {
+      console.log(`[PAUSE-NPL] Msg de ${phone} descartada (IA pausada durante buffer)`);
+      try {
+        const conv = await db.getOrCreateConversa(phone);
+        await db.saveMessage(conv.id, 'user', combinedText);
+      } catch (e) {}
+      return;
+    }
+
     const lead = await db.getOrCreateLead(phone, finalName);
     const conversa = await db.getOrCreateConversa(phone);
 
@@ -526,9 +536,9 @@ async function checkFollowUps() {
 // Limpar lições ruins semanalmente (domingo às 3h)
 setInterval(() => {
   const now = new Date();
-  const belemDay = parseInt(now.toLocaleString('en-US', { timeZone: 'America/Belem', weekday: 'numeric' }));
+  const belemDay = new Date(now.toLocaleString('en-US', { timeZone: 'America/Belem' })).getDay();
   const belemHour = parseInt(now.toLocaleString('en-US', { timeZone: 'America/Belem', hour: 'numeric', hour12: false }));
-  if (belemDay === 1 && belemHour === 3 && aprendizado) {
+  if (belemDay === 0 && belemHour === 3 && aprendizado) {
     aprendizado.limparLicoesRuins();
   }
 }, 60 * 60 * 1000);
@@ -808,7 +818,7 @@ app.post('/api/enviar', async (req, res) => {
   try {
     const { phone, message, conversaId } = req.body;
     if (!phone || !message) return res.status(400).json({ error: 'phone e message obrigatorios' });
-    if (conversaId) await db.saveMessage(conversaId, 'assistant', message);
+    if (conversaId) await db.saveMessage(conversaId, 'assistant', message, { manual: true });
     const result = await whatsapp.sendText(phone, message);
     res.json({ ok: true, result });
   } catch (e) {
