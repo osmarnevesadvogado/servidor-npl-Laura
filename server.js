@@ -20,6 +20,8 @@ try {
 }
 let documentos;
 try { documentos = require('./documentos'); console.log('[INIT-NPL] Documentos OK'); } catch (e) { console.log('[INIT-NPL] Documentos nao disponivel:', e.message); }
+let aprendizado;
+try { aprendizado = require('./aprendizado'); console.log('[INIT-NPL] Aprendizado OK'); } catch (e) { console.log('[INIT-NPL] Aprendizado nao disponivel:', e.message); }
 
 const app = express();
 app.use(cors());
@@ -322,6 +324,14 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
             } catch (e) {
               console.log('[CONFIRM-NPL] Erro ao enviar confirmação:', e.message);
             }
+
+            // Analisar conversa para aprendizado (async, não bloqueia)
+            if (aprendizado) {
+              const histCompleto = await db.getHistory(conversa.id);
+              aprendizado.analisarConversa(histCompleto, leadAtualizado, 'agendou').catch(e =>
+                console.log('[APRENDIZADO-NPL] Erro na analise pos-agendamento:', e.message)
+              );
+            }
           } else {
             console.log('[CALENDAR-NPL] Falha ao criar evento (calendar retornou null)');
           }
@@ -462,12 +472,30 @@ async function checkFollowUps() {
         console.log(`[FOLLOWUP-NPL-72h] ${conv.telefone} (${nome})`);
         await sendFollowUp(msg, true);
         await db.trackEvent(conv.id, conv.leads?.id, 'followup_72h_audio', nome);
+
+        // Analisar conversa perdida para aprendizado
+        if (aprendizado) {
+          const histCompleto = await db.getHistory(conv.id);
+          aprendizado.analisarConversa(histCompleto, conv.leads, 'lead perdido').catch(e =>
+            console.log('[APRENDIZADO-NPL] Erro na analise lead perdido:', e.message)
+          );
+        }
       }
     }
   } catch (e) {
     console.error('[FOLLOWUP-NPL] Erro:', e.message);
   }
 }
+
+// Limpar lições ruins semanalmente (domingo às 3h)
+setInterval(() => {
+  const now = new Date();
+  const belemDay = parseInt(now.toLocaleString('en-US', { timeZone: 'America/Belem', weekday: 'numeric' }));
+  const belemHour = parseInt(now.toLocaleString('en-US', { timeZone: 'America/Belem', hour: 'numeric', hour12: false }));
+  if (belemDay === 1 && belemHour === 3 && aprendizado) {
+    aprendizado.limparLicoesRuins();
+  }
+}, 60 * 60 * 1000);
 
 // Agendar follow-ups (8h-20h Belem, a cada 30 minutos)
 setInterval(() => {
