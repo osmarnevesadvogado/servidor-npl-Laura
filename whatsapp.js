@@ -60,6 +60,41 @@ async function sendAudio(phone, audioBase64) {
   }
 }
 
+async function sendImage(phone, imageUrl, caption = '') {
+  try {
+    const res = await fetch(`${config.ZAPI_BASE}/send-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Client-Token': config.ZAPI_CLIENT_TOKEN },
+      body: JSON.stringify({ phone: cleanPhone(phone), image: imageUrl, caption })
+    });
+    const json = await res.json();
+    console.log('[ZAPI-NPL] Imagem enviada:', phone);
+    markBotSent(phone);
+    return json;
+  } catch (e) {
+    console.error('[ZAPI-NPL] Erro ao enviar imagem:', e.message);
+    return null;
+  }
+}
+
+async function sendDocument(phone, documentUrl, fileName = 'arquivo.pdf') {
+  try {
+    const ext = fileName.split('.').pop() || 'pdf';
+    const res = await fetch(`${config.ZAPI_BASE}/send-document/${ext}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Client-Token': config.ZAPI_CLIENT_TOKEN },
+      body: JSON.stringify({ phone: cleanPhone(phone), document: documentUrl, fileName })
+    });
+    const json = await res.json();
+    console.log('[ZAPI-NPL] Documento enviado:', phone, fileName);
+    markBotSent(phone);
+    return json;
+  } catch (e) {
+    console.error('[ZAPI-NPL] Erro ao enviar documento:', e.message);
+    return null;
+  }
+}
+
 async function notifyHotLead(leadName, phone, trigger) {
   const msg = `LEAD QUENTE - NPL TRABALHISTA!\n\n${leadName} (${phone}) demonstrou interesse alto.\n\nFrase: "${trigger}"\n\nResponda rapido ou a Laura continua o atendimento.`;
   try {
@@ -87,6 +122,8 @@ module.exports = {
   wasBotRecentSend,
   sendText,
   sendAudio,
+  sendImage,
+  sendDocument,
   notifyHotLead,
   cleanup
 };
