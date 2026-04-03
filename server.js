@@ -1013,6 +1013,31 @@ app.get('/api/relatorio-semanal', async (req, res) => {
   }
 });
 
+// ===== CHAT IA (proxy para o CRM frontend) =====
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { system, messages } = req.body;
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ error: 'messages obrigatorio (array)' });
+    }
+    if (!config.ANTHROPIC_API_KEY) {
+      return res.status(500).json({ error: 'ANTHROPIC_API_KEY nao configurada no servidor' });
+    }
+    const Anthropic = require('@anthropic-ai/sdk');
+    const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      system: system || '',
+      messages: messages.map(m => ({ role: m.role, content: m.content }))
+    });
+    res.json({ ok: true, content: response.content[0].text });
+  } catch (e) {
+    console.error('[CHAT] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao processar chat: ' + e.message });
+  }
+});
+
 // ===== INICIAR =====
 app.listen(config.PORT, () => {
   console.log('');
