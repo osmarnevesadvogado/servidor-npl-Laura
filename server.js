@@ -402,21 +402,6 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       await whatsapp.sendText(phone, reply);
     }
 
-    // Detectar encerramento de conversa (sem interesse ou vai pensar)
-    if (lead) {
-      const allLower = (combinedText + ' ' + reply).toLowerCase();
-      const semInteresse = /(n[aã]o tenho interesse|n[aã]o quero|n[aã]o preciso|obrigado mas n[aã]o|n[aã]o obrigad|desist|nao quero mais|pode parar|para de mandar|nao me mande|bloquear)/i.test(combinedText.toLowerCase());
-      const vaiPensar = /(vou pensar|vou ver|vou conversar|depois (eu )?respondo|depois (eu )?falo|preciso pensar|me d[aá] um tempo|vou falar com|conversar com (o )?(meu )?(patr[aã]o|chefe|esposa|marido|familia)|quando (eu )?decidir|depois te (falo|retorno|respondo)|ainda n[aã]o (sei|decidi)|vou avaliar|vou analisar)/i.test(combinedText.toLowerCase());
-
-      if (semInteresse) {
-        await db.updateLead(lead.id, { etapa_funil: 'perdido', motivo_perda: 'Sem interesse', followup_tipo: 'nenhum' });
-        console.log(`[FOLLOWUP-NPL] ${lead.nome || phone} marcado SEM INTERESSE - sem follow-up`);
-      } else if (vaiPensar) {
-        await db.updateLead(lead.id, { followup_tipo: 'aguardando_resposta' });
-        console.log(`[FOLLOWUP-NPL] ${lead.nome || phone} marcado AGUARDANDO RESPOSTA - follow-up 48h`);
-      }
-    }
-
     // Atualizar etapa do funil
     if (lead && lead.etapa_funil === 'novo') {
       await db.updateLead(lead.id, { etapa_funil: 'contato' });
@@ -499,28 +484,7 @@ async function checkFollowUps() {
         await db.saveMessage(conv.id, 'assistant', msg);
       }
 
-      // Verificar tipo de follow-up do lead
-      const followupTipo = conv.leads?.followup_tipo || 'normal';
-
-      // SEM INTERESSE -> nenhum follow-up
-      if (followupTipo === 'nenhum') {
-        continue;
-      }
-
-      // AGUARDANDO RESPOSTA -> apenas 1 msg após 48h
-      if (followupTipo === 'aguardando_resposta') {
-        if (followUpCount === 1 && hoursAgo >= 48 && hoursAgo < 96) {
-          const fixo = `${nome}, tudo bem? Aqui e a Laura do escritorio NPLADVS. Passando para saber se ja conseguiu uma resposta sobre a consulta. Sem pressa, estou a disposicao quando decidir.`;
-          const msg = await getSmartMsg(fixo, 1);
-          console.log(`[FOLLOWUP-NPL-48h-AGUARDANDO] ${conv.telefone} (${nome})`);
-          await sendFollowUp(msg, false);
-          await db.trackEvent(conv.id, conv.leads?.id, 'followup_48h_aguardando', nome);
-        }
-        continue;
-      }
-
-      // FOLLOW-UP NORMAL (lead simplesmente parou de responder)
-      // 1o: 2h depois
+      // 1o FOLLOW-UP: 2h sem resposta
       if (followUpCount === 1 && hoursAgo >= 2 && hoursAgo < 4) {
         const fixo = `${nome}, tudo bem? Ficou com alguma duvida sobre os seus direitos trabalhistas? Estou aqui para te ajudar.`;
         const msg = await getSmartMsg(fixo, 1);
@@ -529,22 +493,31 @@ async function checkFollowUps() {
         await db.trackEvent(conv.id, conv.leads?.id, 'followup_2h', nome);
       }
 
-      // 2o: 24h depois (removido o de 4h para não ser invasivo)
-      if (followUpCount === 2 && hoursAgo >= 20 && hoursAgo < 48) {
+      // 2o FOLLOW-UP: 4h sem resposta
+      if (followUpCount === 2 && hoursAgo >= 2 && hoursAgo < 20) {
         const fixo = `${nome}, aqui e a Laura do escritorio NPLADVS. Passando para saber se posso te ajudar com a sua situacao trabalhista. Temos horarios disponiveis essa semana e a consulta inicial e sem compromisso.`;
         const msg = await getSmartMsg(fixo, 2);
+        console.log(`[FOLLOWUP-NPL-4h] ${conv.telefone} (${nome})`);
+        await sendFollowUp(msg, true);
+        await db.trackEvent(conv.id, conv.leads?.id, 'followup_4h_audio', nome);
+      }
+
+      // 3o FOLLOW-UP: 24h
+      if (followUpCount === 3 && hoursAgo >= 20 && hoursAgo < 48) {
+        const fixo = `${nome}, so lembrando que existe um prazo de 2 anos apos sair da empresa para buscar seus direitos trabalhistas. O escritorio NPLADVS pode avaliar o seu caso sem compromisso. Me avisa se tiver interesse.`;
+        const msg = await getSmartMsg(fixo, 3);
         console.log(`[FOLLOWUP-NPL-24h] ${conv.telefone} (${nome})`);
         await sendFollowUp(msg, false);
         await db.trackEvent(conv.id, conv.leads?.id, 'followup_24h', nome);
       }
 
-      // 3o e ÚLTIMO: 72h - mensagem final respeitosa
-      if (followUpCount === 3 && hoursAgo >= 48 && hoursAgo < 120) {
-        const fixo = `${nome}, essa e a minha ultima mensagem. Caso mude de ideia sobre a consulta trabalhista, o escritorio NPLADVS esta a disposicao. Te desejo tudo de bom.`;
-        const msg = await getSmartMsg(fixo, 3);
+      // 4o FOLLOW-UP: 72h
+      if (followUpCount === 4 && hoursAgo >= 48 && hoursAgo < 96) {
+        const fixo = `${nome}, tudo bem? Aqui e a Laura do escritorio NPLADVS. Essa e a minha ultima mensagem sobre o assunto, nao quero te incomodar. Caso mude de ideia, estamos a disposicao para avaliar os seus direitos. Te desejo tudo de bom.`;
+        const msg = await getSmartMsg(fixo, 4);
         console.log(`[FOLLOWUP-NPL-72h] ${conv.telefone} (${nome})`);
-        await sendFollowUp(msg, false);
-        await db.trackEvent(conv.id, conv.leads?.id, 'followup_72h', nome);
+        await sendFollowUp(msg, true);
+        await db.trackEvent(conv.id, conv.leads?.id, 'followup_72h_audio', nome);
 
         // Analisar conversa perdida para aprendizado
         if (aprendizado) {
@@ -719,23 +692,69 @@ app.post('/webhook/zapi', async (req, res) => {
     const audioUrl = body.audio?.audioUrl || body.audioMessage?.url || body.audio?.url || null;
     const isAudio = body.isAudio === true || !!body.audioMessage || (!!audioUrl && audioUrl.length > 10);
 
-    // Se for audio, transcrever antes de processar
-    if (isAudio || audioUrl) {
-      if (!audio) return res.json({ status: 'audio_not_configured' });
+    // Detectar mídia (imagem, documento, vídeo)
+    const imageData = body.image || body.imageMessage || null;
+    const documentData = body.document || body.documentMessage || null;
+    const videoData = body.video || body.videoMessage || null;
+    const hasMedia = imageData || documentData || videoData;
 
+    // Se for mídia (imagem, documento, vídeo), salvar na conversa
+    if (hasMedia && phone) {
+      let mediaUrl = null;
+      let mediaType = null;
+      let caption = '';
+
+      if (imageData) {
+        mediaUrl = imageData.imageUrl || imageData.url || imageData.mediaUrl || null;
+        mediaType = 'image';
+        caption = imageData.caption || '';
+      } else if (documentData) {
+        mediaUrl = documentData.documentUrl || documentData.url || documentData.mediaUrl || null;
+        mediaType = 'document';
+        caption = documentData.fileName || documentData.caption || 'Documento';
+      } else if (videoData) {
+        mediaUrl = videoData.videoUrl || videoData.url || videoData.mediaUrl || null;
+        mediaType = 'video';
+        caption = videoData.caption || '';
+      }
+
+      console.log(`[MEDIA-NPL] ${mediaType} recebido de ${phone}: ${mediaUrl?.slice(0, 60)}`);
+
+      try {
+        const conversa = await db.getOrCreateConversa(phone);
+        const content = caption || (mediaType === 'image' ? '📷 Imagem' : mediaType === 'document' ? '📄 Documento' : '🎥 Vídeo');
+        await db.saveMessage(conversa.id, 'user', content, { media_url: mediaUrl, media_type: mediaType });
+      } catch (e) {
+        console.error('[MEDIA-NPL] Erro ao salvar mídia:', e.message);
+      }
+
+      return res.json({ status: 'media_saved' });
+    }
+
+    // Se for audio, salvar URL + transcrever + processar
+    if (isAudio || audioUrl) {
       console.log(`[AUDIO-NPL] Audio recebido de ${phone}`);
       res.json({ status: 'audio_received' });
 
       (async () => {
         try {
+          const url = audioUrl;
+          const conversa = await db.getOrCreateConversa(phone);
+
+          // Salvar áudio com URL para o CRM poder reproduzir
+          if (url) {
+            await db.saveMessage(conversa.id, 'user', '🎤 Áudio', { media_url: url, media_type: 'audio' });
+          }
+
+          // Se IA pausada, não transcrever/responder
           if (isAIPaused(phone)) {
-            console.log(`[PAUSE-NPL] Audio de ${phone} ignorado - IA pausada`);
+            console.log(`[PAUSE-NPL] Audio de ${phone} salvo - IA pausada`);
             return;
           }
 
-          const url = audioUrl;
-          if (!url) {
-            console.error('[AUDIO-NPL] URL do audio nao encontrada no payload');
+          // Transcrever e responder
+          if (!audio || !url) {
+            console.log('[AUDIO-NPL] Whisper não disponível ou URL ausente');
             return;
           }
 
@@ -746,6 +765,8 @@ app.post('/webhook/zapi', async (req, res) => {
             return;
           }
 
+          // Atualizar a mensagem do áudio com a transcrição
+          // (salvar transcrição como conteúdo para o histórico da IA)
           await processBufferedMessage(phone, transcricao, senderName, true);
         } catch (e) {
           console.error('[AUDIO-NPL] Erro ao processar audio:', e.message);
@@ -843,9 +864,9 @@ app.get('/api/conversas/:id/mensagens', async (req, res) => {
 
 app.post('/api/enviar', async (req, res) => {
   try {
-    const { phone, message, conversaId } = req.body;
+    const { phone, message, conversaId, usuario_nome } = req.body;
     if (!phone || !message) return res.status(400).json({ error: 'phone e message obrigatorios' });
-    if (conversaId) await db.saveMessage(conversaId, 'assistant', message, { manual: true });
+    if (conversaId) await db.saveMessage(conversaId, 'assistant', message, { manual: true, usuario_nome: usuario_nome || null });
     const result = await whatsapp.sendText(phone, message);
     res.json({ ok: true, result });
   } catch (e) {
@@ -1037,6 +1058,90 @@ app.get('/api/relatorio-semanal', async (req, res) => {
     res.json(r);
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ===== ENVIAR ÁUDIO (gravado no CRM) =====
+app.post('/api/enviar-audio', async (req, res) => {
+  try {
+    const { phone, audioBase64, conversaId, usuario_nome } = req.body;
+    if (!phone || !audioBase64) return res.status(400).json({ error: 'phone e audioBase64 obrigatorios' });
+
+    // Extrair base64 puro (remover prefixo data:audio/...)
+    const base64Data = audioBase64.includes(',') ? audioBase64.split(',')[1] : audioBase64;
+
+    const result = await whatsapp.sendAudio(phone, base64Data);
+
+    if (conversaId) {
+      await db.saveMessage(conversaId, 'assistant', '🎤 Áudio enviado', {
+        manual: true,
+        usuario_nome: usuario_nome || null,
+        media_type: 'audio'
+      });
+    }
+
+    res.json({ ok: true, result });
+  } catch (e) {
+    console.error('[ENVIAR-AUDIO] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar áudio' });
+  }
+});
+
+// ===== ENVIAR ARQUIVO (imagem ou documento) =====
+app.post('/api/enviar-arquivo', async (req, res) => {
+  try {
+    const { phone, fileUrl, fileName, mediaType, conversaId, usuario_nome } = req.body;
+    if (!phone || !fileUrl) return res.status(400).json({ error: 'phone e fileUrl obrigatorios' });
+
+    let result;
+    const type = mediaType || 'document';
+
+    if (type === 'image') {
+      result = await whatsapp.sendImage(phone, fileUrl, fileName || '');
+    } else {
+      result = await whatsapp.sendDocument(phone, fileUrl, fileName || 'arquivo.pdf');
+    }
+
+    // Salvar na conversa
+    if (conversaId) {
+      const content = type === 'image' ? (fileName || '📷 Imagem enviada') : (fileName || '📄 Documento enviado');
+      await db.saveMessage(conversaId, 'assistant', content, {
+        manual: true,
+        usuario_nome: usuario_nome || null,
+        media_url: fileUrl,
+        media_type: type
+      });
+    }
+
+    res.json({ ok: true, result });
+  } catch (e) {
+    console.error('[ENVIAR-ARQUIVO] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar arquivo' });
+  }
+});
+
+// ===== CHAT IA (proxy para o CRM frontend) =====
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { system, messages } = req.body;
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ error: 'messages obrigatorio (array)' });
+    }
+    if (!config.ANTHROPIC_API_KEY) {
+      return res.status(500).json({ error: 'ANTHROPIC_API_KEY nao configurada no servidor' });
+    }
+    const Anthropic = require('@anthropic-ai/sdk');
+    const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      system: system || '',
+      messages: messages.map(m => ({ role: m.role, content: m.content }))
+    });
+    res.json({ ok: true, content: response.content[0].text });
+  } catch (e) {
+    console.error('[CHAT] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao processar chat: ' + e.message });
   }
 });
 
