@@ -670,15 +670,12 @@ app.post('/webhook/zapi', async (req, res) => {
       return res.status(429).json({ error: 'Too many requests' });
     }
 
-    // Validar token de segurança da Z-API (Client-Token)
-    const webhookToken = config.ZAPI_WEBHOOK_TOKEN || config.ZAPI_CLIENT_TOKEN;
-    if (!webhookToken) {
-      console.error('[WEBHOOK-NPL] Nenhum token de seguranca configurado - rejeitando requisicao');
-      return res.status(500).json({ error: 'Webhook token not configured' });
-    }
-    const received = req.headers['client-token'] || req.headers['x-api-key'] || req.headers['authorization'];
-    if (received !== webhookToken) {
-      return res.status(401).json({ error: 'Unauthorized' });
+    // Validar token do webhook (opcional — só valida se ZAPI_WEBHOOK_TOKEN estiver configurado)
+    if (config.ZAPI_WEBHOOK_TOKEN) {
+      const received = req.headers['client-token'] || req.headers['x-api-key'] || req.headers['authorization'];
+      if (received !== config.ZAPI_WEBHOOK_TOKEN) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
     }
 
     const body = req.body;
