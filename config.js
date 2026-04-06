@@ -30,7 +30,7 @@ module.exports = {
   },
 
   // Telefone do Dr. Osmar para notificações
-  OSMAR_PHONE: process.env.OSMAR_PHONE || '5591981001182',
+  OSMAR_PHONE: process.env.OSMAR_PHONE,
 
   // Identificador do escritório (usado para separar dados no Supabase)
   ESCRITORIO: 'npl',
@@ -64,11 +64,17 @@ module.exports = {
   },
 
   // Google Calendar
-  GOOGLE_CALENDAR_ID: process.env.GOOGLE_CALENDAR_ID || '2ecec3ace4e9b7aa38e59c36dd08a622e7a5a1a137176f8e3cf8a4a740b6e7cc@group.calendar.google.com',
+  GOOGLE_CALENDAR_ID: process.env.GOOGLE_CALENDAR_ID,
   GOOGLE_CALENDAR_CREDENTIALS: process.env.GOOGLE_CALENDAR_CREDENTIALS || null,
 
   // Google Drive
   GOOGLE_DRIVE_PASTA_RAIZ: process.env.GOOGLE_DRIVE_PASTA_RAIZ || null,
+
+  // Autenticação da API (obrigatório para endpoints POST)
+  API_KEY: process.env.API_KEY,
+
+  // Origens permitidas para CORS (separadas por vírgula)
+  ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS || null,
 
   // Servidor
   PORT: process.env.PORT || 3000,
