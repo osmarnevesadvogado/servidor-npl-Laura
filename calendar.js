@@ -165,7 +165,7 @@ function isFeriado(ano, mes, dia) {
 // ===== LOCK CONTRA AGENDAMENTOS DUPLICADOS =====
 // Quando a Laura oferece um horário para alguém, "reserva" temporariamente
 const slotsReservados = new Map(); // key: ISO string do slot -> { phone, expira }
-const RESERVA_DURACAO = 10 * 60 * 1000; // 10 minutos de reserva temporária
+const RESERVA_DURACAO = 20 * 60 * 1000; // 20 minutos de reserva temporária
 
 function reservarSlot(slotInicio, phone) {
   const key = slotInicio.toISOString();
@@ -374,7 +374,7 @@ async function sugerirHorarios(quantidade = 3, phoneAtual = null) {
 
   if (slots.length === 0) {
     return {
-      texto: 'No momento estou sem horários disponíveis essa semana. Posso te retornar quando abrir uma vaga?',
+      texto: 'Esta semana esta lotada, mas na proxima ja tenho horarios. Posso reservar um horario pra voce assim que abrir?',
       slots: []
     };
   }
@@ -410,13 +410,15 @@ async function sugerirHorarios(quantidade = 3, phoneAtual = null) {
   }
 
   const opcoes = selecionados.map(s => s.label);
+  const totalDisponiveis = slots.length;
+  const escassez = totalDisponiveis <= 3 ? ' (ultimos horarios da semana)' : '';
   let texto;
   if (opcoes.length === 1) {
-    texto = `Tenho ${opcoes[0]} com o escritório. Quer marcar?`;
+    texto = `So tenho ${opcoes[0]} disponivel${escassez}. Quer que eu reserve pra voce?`;
   } else if (opcoes.length === 2) {
-    texto = `Tenho ${opcoes[0]} ou ${opcoes[1]}. Qual prefere?`;
+    texto = `Tenho ${opcoes[0]} ou ${opcoes[1]}${escassez}. Qual prefere?`;
   } else {
-    texto = `Tenho ${opcoes[0]}, ${opcoes[1]} ou ${opcoes[2]}. Qual fica melhor pra você?`;
+    texto = `Tenho ${opcoes[0]}, ${opcoes[1]} ou ${opcoes[2]}${escassez}. Qual fica melhor pra voce?`;
   }
 
   return { texto, slots: selecionados };
