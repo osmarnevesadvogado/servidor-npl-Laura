@@ -6,6 +6,7 @@ const config = require('./config');
 
 const supabase = createClient(config.SUPABASE_URL, config.SUPABASE_KEY);
 const ESC = config.ESCRITORIO; // 'npl'
+const INST = config.ZAPI_INSTANCE; // ID da instância Z-API (separa dados Laura/Ana)
 
 // ===== CONVERSAS =====
 
@@ -19,6 +20,7 @@ async function getOrCreateConversa(phone) {
     .eq('telefone', tel)
     .eq('status', 'ativa')
     .eq('escritorio', ESC)
+    .or(`instancia.eq.${INST},instancia.is.null`)
     .order('criado_em', { ascending: false })
     .limit(1)
     .single();
@@ -27,7 +29,7 @@ async function getOrCreateConversa(phone) {
 
   const { data: newConv } = await supabase
     .from('conversas')
-    .insert({ telefone: tel, titulo: 'WhatsApp', escritorio: ESC })
+    .insert({ telefone: tel, titulo: 'WhatsApp', escritorio: ESC, instancia: INST })
     .select()
     .single();
 
@@ -74,12 +76,13 @@ async function getOrCreateLead(phone, nome) {
   const { cleanPhone } = require('./whatsapp');
   const tel = cleanPhone(phone);
 
-  // Buscar lead existente deste escritório
+  // Buscar lead existente desta instância
   let { data: lead } = await supabase
     .from('leads')
     .select('*')
     .eq('telefone', tel)
     .eq('escritorio', ESC)
+    .or(`instancia.eq.${INST},instancia.is.null`)
     .limit(1)
     .single();
 
@@ -93,6 +96,7 @@ async function getOrCreateLead(phone, nome) {
       origem: 'WhatsApp NPL',
       etapa_funil: 'novo',
       escritorio: ESC,
+      instancia: INST,
       tese_interesse: 'Trabalhista',
       data_primeiro_contato: new Date().toISOString()
     })
@@ -190,6 +194,7 @@ async function getEligibleConversas() {
     .select('id, telefone, lead_id, leads(id, nome, tese_interesse, etapa_funil, telefone, followup_tipo)')
     .eq('status', 'ativa')
     .eq('escritorio', ESC)
+    .or(`instancia.eq.${INST},instancia.is.null`)
     .not('lead_id', 'is', null);
 
   if (!data) return [];
@@ -206,6 +211,7 @@ async function listConversas(limit = 50) {
     .from('conversas')
     .select('*, leads(nome, tese_interesse, etapa_funil)')
     .eq('escritorio', ESC)
+    .or(`instancia.eq.${INST},instancia.is.null`)
     .order('criado_em', { ascending: false })
     .limit(limit);
   return data || [];
@@ -221,11 +227,11 @@ async function getConversaMensagens(conversaId) {
 }
 
 async function getMetricas() {
-  const { data: leads } = await supabase.from('leads').select('etapa_funil, criado_em').eq('escritorio', ESC);
+  const { data: leads } = await supabase.from('leads').select('etapa_funil, criado_em').eq('escritorio', ESC).or(`instancia.eq.${INST},instancia.is.null`);
   const etapas = { novo: 0, contato: 0, proposta: 0, convertido: 0, perdido: 0 };
   (leads || []).forEach(l => { if (etapas[l.etapa_funil] !== undefined) etapas[l.etapa_funil]++; });
 
-  const { data: conversas } = await supabase.from('conversas').select('id, criado_em').eq('status', 'ativa').eq('escritorio', ESC);
+  const { data: conversas } = await supabase.from('conversas').select('id, criado_em').eq('status', 'ativa').eq('escritorio', ESC).or(`instancia.eq.${INST},instancia.is.null`);
 
   let eventos = [];
   try {
@@ -454,6 +460,7 @@ async function getRelatorioSemanal() {
     .from('leads')
     .select('id, nome, tese_interesse, etapa_funil')
     .eq('escritorio', ESC)
+    .or(`instancia.eq.${INST},instancia.is.null`)
     .gte('criado_em', semanaAtrasISO);
 
   const convertidos = (leadsNovos || []).filter(l => l.etapa_funil === 'convertido');
@@ -481,6 +488,7 @@ async function getRelatorioSemanal() {
     .from('leads')
     .select('id')
     .eq('escritorio', ESC)
+    .or(`instancia.eq.${INST},instancia.is.null`)
     .not('etapa_funil', 'in', '("convertido","perdido")');
 
   const { data: recebidos } = await supabase
