@@ -135,10 +135,12 @@ async function getOrCreateFolder(nome, pastaParentId = null) {
   const parentId = pastaParentId || PASTA_RAIZ_ID;
 
   try {
+    // Escapar aspas simples no nome para evitar injection na query
+    const nomeSafe = nome.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     // Buscar pasta existente
     const query = parentId
-      ? `name='${nome}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
-      : `name='${nome}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+      ? `name='${nomeSafe}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
+      : `name='${nomeSafe}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
 
     const { data } = await drive.files.list({ q: query, fields: 'files(id, name)', pageSize: 1 });
 
@@ -220,8 +222,9 @@ async function fileExists(nome, pastaId) {
   if (!drive) return false;
 
   try {
+    const nomeSafe = nome.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     const { data } = await drive.files.list({
-      q: `name='${nome}' and '${pastaId}' in parents and trashed=false`,
+      q: `name='${nomeSafe}' and '${pastaId}' in parents and trashed=false`,
       fields: 'files(id)',
       pageSize: 1
     });

@@ -63,7 +63,12 @@ Regras:
       // Tentar extrair JSON de dentro do texto
       const match = texto.match(/\[[\s\S]*\]/);
       if (match) {
-        licoes = JSON.parse(match[0]);
+        try {
+          licoes = JSON.parse(match[0]);
+        } catch (parseError) {
+          console.log('[APRENDIZADO-NPL] Falha ao parsear JSON extraido');
+          return;
+        }
       } else {
         console.log('[APRENDIZADO-NPL] Resposta nao e JSON valido');
         return;

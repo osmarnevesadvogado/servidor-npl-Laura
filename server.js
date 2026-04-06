@@ -24,8 +24,23 @@ let aprendizado;
 try { aprendizado = require('./aprendizado'); console.log('[INIT-NPL] Aprendizado OK'); } catch (e) { console.log('[INIT-NPL] Aprendizado nao disponivel:', e.message); }
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+
+// CORS restrito a origens permitidas
+const corsOptions = config.ALLOWED_ORIGINS
+  ? { origin: config.ALLOWED_ORIGINS.split(',').map(o => o.trim()), credentials: true }
+  : {};
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '1mb' }));
+
+// Middleware de autenticação para endpoints da API
+function requireApiKey(req, res, next) {
+  if (!config.API_KEY) return next(); // se não configurada, permite (dev local)
+  const key = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
+  if (key !== config.API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
 
 // ===== BUFFER DE MENSAGENS =====
 const messageBuffer = new Map();
@@ -655,11 +670,13 @@ app.post('/webhook/zapi', async (req, res) => {
       return res.status(429).json({ error: 'Too many requests' });
     }
 
-    if (config.ZAPI_WEBHOOK_TOKEN) {
-      const received = req.headers['x-api-key'] || req.headers['authorization'] || req.query.token;
-      if (received !== config.ZAPI_WEBHOOK_TOKEN) {
-        return res.status(401).json({ error: 'Unauthorized' });
-      }
+    if (!config.ZAPI_WEBHOOK_TOKEN) {
+      console.error('[WEBHOOK-NPL] ZAPI_WEBHOOK_TOKEN nao configurado - rejeitando requisicao');
+      return res.status(500).json({ error: 'Webhook token not configured' });
+    }
+    const received = req.headers['x-api-key'] || req.headers['authorization'];
+    if (received !== config.ZAPI_WEBHOOK_TOKEN) {
+      return res.status(401).json({ error: 'Unauthorized' });
     }
 
     const body = req.body;
@@ -687,7 +704,9 @@ app.post('/webhook/zapi', async (req, res) => {
     if (messageId) processedMessages.add(messageId);
 
     const phone = body.phone || body.from?.replace('@c.us', '') || '';
-    const text = body.text?.message || body.body || '';
+    let text = body.text?.message || body.body || '';
+    // Limitar tamanho da mensagem para evitar abuso
+    if (text.length > 5000) text = text.slice(0, 5000);
     const senderName = body.senderName || body.notifyName || '';
     const audioUrl = body.audio?.audioUrl || body.audioMessage?.url || body.audio?.url || null;
     const isAudio = body.isAudio === true || !!body.audioMessage || (!!audioUrl && audioUrl.length > 10);
@@ -798,9 +817,9 @@ app.post('/webhook/zapi', async (req, res) => {
     });
 
   } catch (e) {
-    console.error('[WEBHOOK-NPL] Erro:', e);
+    console.error('[WEBHOOK-NPL] Erro:', e.message);
     if (!res.headersSent) {
-      res.status(500).json({ error: e.message });
+      res.status(500).json({ error: 'Erro interno' });
     }
   }
 });
@@ -812,26 +831,21 @@ app.get('/api/health', (req, res) => {
     status: 'online',
     escritorio: 'NPLADVS',
     assistente: 'Laura',
-    foco: 'Trabalhista',
-    timestamp: new Date().toISOString(),
-    services: {
-      claude: !!config.ANTHROPIC_API_KEY,
-      zapi: !!config.ZAPI_INSTANCE,
-      supabase: !!config.SUPABASE_URL
-    }
+    timestamp: new Date().toISOString()
   });
 });
 
-app.get('/api/test/zapi', async (req, res) => {
+app.get('/api/test/zapi', requireApiKey, async (req, res) => {
   try {
     const r = await fetch(`${config.ZAPI_BASE}/status`, { headers: { 'Client-Token': config.ZAPI_CLIENT_TOKEN } });
     res.json(await r.json());
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[TEST-ZAPI] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao testar Z-API' });
   }
 });
 
-app.get('/api/test/claude', async (req, res) => {
+app.get('/api/test/claude', requireApiKey, async (req, res) => {
   try {
     const Anthropic = require('@anthropic-ai/sdk');
     const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
@@ -842,7 +856,8 @@ app.get('/api/test/claude', async (req, res) => {
     });
     res.json({ ok: true, response: response.content[0].text });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    console.error('[TEST-CLAUDE] Erro:', e.message);
+    res.status(500).json({ ok: false, error: 'Erro ao testar Claude' });
   }
 });
 
@@ -862,7 +877,7 @@ app.get('/api/conversas/:id/mensagens', async (req, res) => {
   }
 });
 
-app.post('/api/enviar', async (req, res) => {
+app.post('/api/enviar', requireApiKey, async (req, res) => {
   try {
     const { phone, message, conversaId, usuario_nome } = req.body;
     if (!phone || !message) return res.status(400).json({ error: 'phone e message obrigatorios' });
@@ -874,14 +889,14 @@ app.post('/api/enviar', async (req, res) => {
   }
 });
 
-app.post('/api/pausar', (req, res) => {
+app.post('/api/pausar', requireApiKey, (req, res) => {
   const { phone, minutes } = req.body;
   if (!phone) return res.status(400).json({ error: 'phone obrigatorio' });
   pauseAI(phone, minutes || 30);
   res.json({ ok: true, msg: `IA pausada para ${phone} por ${minutes || 30} minutos` });
 });
 
-app.post('/api/retomar', (req, res) => {
+app.post('/api/retomar', requireApiKey, (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ error: 'phone obrigatorio' });
   pausedConversas.delete(whatsapp.cleanPhone(phone));
@@ -892,14 +907,15 @@ app.get('/api/metricas', async (req, res) => {
   try {
     res.json(await db.getMetricas());
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[METRICAS] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar metricas' });
   }
 });
 
 // ===== AGENTE ORGANIZADOR DE DOCUMENTOS =====
 
 // Organizar documentos de um cliente (sob demanda)
-app.post('/api/documentos/organizar', async (req, res) => {
+app.post('/api/documentos/organizar', requireApiKey, async (req, res) => {
   try {
     if (!documentos) return res.status(503).json({ error: 'Módulo de documentos não disponível' });
 
@@ -935,7 +951,8 @@ app.post('/api/documentos/organizar', async (req, res) => {
       }
     })();
   } catch (e) {
-    if (!res.headersSent) res.status(500).json({ error: e.message });
+    console.error('[DOCS-NPL] Erro:', e.message);
+    if (!res.headersSent) res.status(500).json({ error: 'Erro ao organizar documentos' });
   }
 });
 
@@ -970,12 +987,13 @@ app.get('/api/documentos/auditoria/:phone', async (req, res) => {
       }))
     });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[AUDITORIA] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar auditoria' });
   }
 });
 
 // Cobrar documentos faltantes do cliente
-app.post('/api/documentos/cobrar', async (req, res) => {
+app.post('/api/documentos/cobrar', requireApiKey, async (req, res) => {
   try {
     if (!documentos) return res.status(503).json({ error: 'Módulo de documentos não disponível' });
 
@@ -1043,7 +1061,7 @@ setInterval(async () => {
   }
 }, 15 * 60 * 1000);
 
-app.post('/api/relatorio-semanal', async (req, res) => {
+app.post('/api/relatorio-semanal', requireApiKey, async (req, res) => {
   const msg = await enviarRelatorioSemanal();
   if (msg) {
     res.json({ ok: true, msg });
@@ -1057,12 +1075,13 @@ app.get('/api/relatorio-semanal', async (req, res) => {
     const r = await db.getRelatorioSemanal();
     res.json(r);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[RELATORIO] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar relatorio' });
   }
 });
 
 // ===== ENVIAR ÁUDIO (gravado no CRM) =====
-app.post('/api/enviar-audio', async (req, res) => {
+app.post('/api/enviar-audio', requireApiKey, async (req, res) => {
   try {
     const { phone, audioBase64, conversaId, usuario_nome } = req.body;
     if (!phone || !audioBase64) return res.status(400).json({ error: 'phone e audioBase64 obrigatorios' });
@@ -1088,10 +1107,25 @@ app.post('/api/enviar-audio', async (req, res) => {
 });
 
 // ===== ENVIAR ARQUIVO (imagem ou documento) =====
-app.post('/api/enviar-arquivo', async (req, res) => {
+app.post('/api/enviar-arquivo', requireApiKey, async (req, res) => {
   try {
     const { phone, fileUrl, fileName, mediaType, conversaId, usuario_nome } = req.body;
     if (!phone || !fileUrl) return res.status(400).json({ error: 'phone e fileUrl obrigatorios' });
+
+    // Validar URL para evitar SSRF
+    try {
+      const parsedUrl = new URL(fileUrl);
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        return res.status(400).json({ error: 'Protocolo de URL nao permitido' });
+      }
+      // Bloquear IPs internos/localhost
+      const hostname = parsedUrl.hostname.toLowerCase();
+      if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' || hostname.startsWith('192.168.') || hostname.startsWith('10.') || hostname.startsWith('172.') || hostname === '[::1]') {
+        return res.status(400).json({ error: 'URL interna nao permitida' });
+      }
+    } catch {
+      return res.status(400).json({ error: 'URL invalida' });
+    }
 
     let result;
     const type = mediaType || 'document';
@@ -1121,7 +1155,7 @@ app.post('/api/enviar-arquivo', async (req, res) => {
 });
 
 // ===== CHAT IA (proxy para o CRM frontend) =====
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', requireApiKey, async (req, res) => {
   try {
     const { system, messages } = req.body;
     if (!messages || !Array.isArray(messages)) {
@@ -1141,7 +1175,7 @@ app.post('/api/chat', async (req, res) => {
     res.json({ ok: true, content: response.content[0].text });
   } catch (e) {
     console.error('[CHAT] Erro:', e.message);
-    res.status(500).json({ error: 'Erro ao processar chat: ' + e.message });
+    res.status(500).json({ error: 'Erro ao processar chat' });
   }
 });
 
@@ -1150,12 +1184,7 @@ app.listen(config.PORT, () => {
   console.log('');
   console.log('NPLADVS - Servidor (Laura)');
   console.log('Especializado em Direitos Trabalhistas');
-  console.log(`Rodando em http://localhost:${config.PORT}`);
-  console.log(`Claude: ${config.ANTHROPIC_API_KEY ? 'OK' : 'Faltando'}`);
-  console.log(`Z-API: ${config.ZAPI_INSTANCE ? 'OK' : 'Faltando'}`);
-  console.log(`Supabase: ${config.SUPABASE_URL ? 'OK' : 'Faltando'}`);
-  console.log(`OpenAI: ${config.OPENAI_API_KEY ? 'OK (audio ativo)' : 'Faltando (audio desativado)'}`);
-  console.log(`Relatorio semanal: Segunda 8h30 (Belem) via WhatsApp`);
-  console.log(`Webhook: POST ${config.RENDER_URL || 'http://localhost:' + config.PORT}/webhook/zapi`);
+  console.log(`Rodando na porta ${config.PORT}`);
+  console.log('Servicos iniciados');
   console.log('');
 });
