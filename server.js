@@ -766,11 +766,12 @@ app.post('/webhook/zapi', async (req, res) => {
     const videoData = body.video || body.videoMessage || null;
     const hasMedia = imageData || documentData || videoData;
 
-    // Se for mídia (imagem, documento, vídeo), salvar na conversa
+    // Se for mídia (imagem, documento, vídeo), salvar na conversa e processar
     if (hasMedia && phone) {
       let mediaUrl = null;
       let mediaType = null;
       let caption = '';
+      let fileName = '';
 
       if (imageData) {
         mediaUrl = imageData.imageUrl || imageData.url || imageData.mediaUrl || null;
@@ -779,7 +780,8 @@ app.post('/webhook/zapi', async (req, res) => {
       } else if (documentData) {
         mediaUrl = documentData.documentUrl || documentData.url || documentData.mediaUrl || null;
         mediaType = 'document';
-        caption = documentData.fileName || documentData.caption || 'Documento';
+        fileName = documentData.fileName || '';
+        caption = fileName || documentData.caption || 'Documento';
       } else if (videoData) {
         mediaUrl = videoData.videoUrl || videoData.url || videoData.mediaUrl || null;
         mediaType = 'video';
@@ -788,15 +790,28 @@ app.post('/webhook/zapi', async (req, res) => {
 
       console.log(`[MEDIA-NPL] ${mediaType} recebido de ${phone}: ${mediaUrl?.slice(0, 60)}`);
 
-      try {
-        const conversa = await db.getOrCreateConversa(phone);
-        const content = caption || (mediaType === 'image' ? '📷 Imagem' : mediaType === 'document' ? '📄 Documento' : '🎥 Vídeo');
-        await db.saveMessage(conversa.id, 'user', content, { media_url: mediaUrl, media_type: mediaType });
-      } catch (e) {
-        console.error('[MEDIA-NPL] Erro ao salvar mídia:', e.message);
+      // Salvar mídia no banco
+      const conversa = await db.getOrCreateConversa(phone);
+      const contentLabel = mediaType === 'image' ? (caption || '📷 Imagem')
+        : mediaType === 'document' ? `📄 ${fileName || 'Documento'}`
+        : (caption || '🎥 Vídeo');
+      await db.saveMessage(conversa.id, 'user', contentLabel, { media_url: mediaUrl, media_type: mediaType });
+
+      // Se IA pausada, salvar mas não responder
+      if (isAIPaused(phone)) {
+        console.log(`[PAUSE-NPL] Mídia de ${phone} salva - IA pausada`);
+        return res.json({ status: 'media_saved' });
       }
 
-      return res.json({ status: 'media_saved' });
+      // Processar com a IA para Laura responder sobre a mídia
+      res.json({ status: 'media_processing' });
+      const descricaoMidia = mediaType === 'image' ? (caption || 'uma imagem')
+        : mediaType === 'document' ? `um documento: ${fileName || 'arquivo'}`
+        : (caption || 'um vídeo');
+      processBufferedMessage(phone, `[Lead enviou ${descricaoMidia}]`, senderName).catch(err => {
+        console.error('[MEDIA-NPL] Erro ao processar:', err.message);
+      });
+      return;
     }
 
     // Se for audio, salvar URL + transcrever + processar
@@ -811,9 +826,6 @@ app.post('/webhook/zapi', async (req, res) => {
 
           // Salvar áudio com URL para o CRM poder reproduzir
           await db.saveMessage(conversa.id, 'user', '🎤 Áudio', { media_url: url || null, media_type: 'audio' });
-          if (!url) {
-            console.log('[AUDIO-NPL] Áudio sem URL. Body keys:', Object.keys(body).join(', '));
-          }
 
           // Se IA pausada, não transcrever/responder
           if (isAIPaused(phone)) {
