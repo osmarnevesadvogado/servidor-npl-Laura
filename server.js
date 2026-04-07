@@ -321,11 +321,26 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       /(segunda|terça|terca|quarta|quinta|sexta|amanhã|amanha|hoje)/.test(replyLower);
     const agendouConsulta = temConfirmacao && temDataHora;
     if (calendar && agendouConsulta) {
-      // Verificar se já agendou nesta conversa (evitar double booking)
+      // Verificar se é remarcação (lead pediu para mudar/trocar/remarcar)
+      const allTextLower = (history || []).slice(-4).map(m => m.content).join(' ').toLowerCase() + ' ' + combinedText.toLowerCase();
+      const eRemarcacao = /(remarc|mudar|trocar|cancelar|adiar|nao vou poder|não vou poder|outro dia|outro horario|outro horário|posso mudar|posso trocar)/.test(allTextLower);
+
+      // Verificar se já agendou (evitar double booking, exceto remarcação)
       const agendamentoExistente = await verificarJaAgendou(phone);
-      if (agendamentoExistente) {
+      if (agendamentoExistente && !eRemarcacao) {
         console.log(`[CALENDAR-NPL] BLOQUEADO: ${phone} ja agendou recentemente (${agendamentoExistente.data})`);
       } else {
+      // Se é remarcação, cancelar consulta anterior
+      if (eRemarcacao && agendamentoExistente) {
+        try {
+          const cancelado = await calendar.cancelarConsulta(phone);
+          if (cancelado) {
+            console.log(`[CALENDAR-NPL] Remarcação: consulta anterior cancelada (${cancelado.summary})`);
+          }
+        } catch (e) {
+          console.log('[CALENDAR-NPL] Erro ao cancelar consulta anterior:', e.message);
+        }
+      }
       try {
         // Buscar slot usando a RESPOSTA DA LAURA (que tem o horário confirmado)
         // e o texto do lead como fallback

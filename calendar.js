@@ -673,10 +673,51 @@ async function getConsultasDoDia() {
   }
 }
 
+// ===== CANCELAR CONSULTA POR TELEFONE =====
+async function cancelarConsulta(telefone) {
+  const calendar = getCalendarClient();
+  if (!calendar) return null;
+
+  try {
+    // Buscar eventos futuros que contenham o telefone na descrição
+    const agora = new Date();
+    const response = await calendar.events.list({
+      calendarId: CALENDAR_ID,
+      timeMin: agora.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime',
+      timeZone: TIMEZONE,
+      maxResults: 20
+    });
+
+    const eventos = response.data.items || [];
+    const telLimpo = telefone.replace(/\D/g, '');
+
+    for (const ev of eventos) {
+      const desc = ev.description || '';
+      if (desc.includes(telLimpo) && ev.summary?.includes('Consulta Trabalhista')) {
+        await calendar.events.delete({
+          calendarId: CALENDAR_ID,
+          eventId: ev.id
+        });
+        console.log(`[CALENDAR-NPL] Consulta cancelada: ${ev.summary} (${ev.start?.dateTime})`);
+        return { id: ev.id, summary: ev.summary, inicio: ev.start?.dateTime };
+      }
+    }
+
+    console.log(`[CALENDAR-NPL] Nenhuma consulta encontrada para ${telefone}`);
+    return null;
+  } catch (e) {
+    console.error('[CALENDAR-NPL] Erro ao cancelar consulta:', e.message);
+    return null;
+  }
+}
+
 module.exports = {
   getHorariosDisponiveis,
   sugerirHorarios,
   criarConsulta,
+  cancelarConsulta,
   encontrarSlot,
   getConsultasDoDia,
   formatarSlot: formatarSlotDate,
