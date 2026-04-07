@@ -20,9 +20,9 @@ async function getOrCreateConversa(phone) {
     .eq('telefone', tel)
     .eq('status', 'ativa')
     .eq('escritorio', ESC)
-        .order('criado_em', { ascending: false })
+    .order('criado_em', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (conv) return conv;
 
@@ -81,8 +81,8 @@ async function getOrCreateLead(phone, nome) {
     .select('*')
     .eq('telefone', tel)
     .eq('escritorio', ESC)
-        .limit(1)
-    .single();
+    .limit(1)
+    .maybeSingle();
 
   if (lead) return lead;
 

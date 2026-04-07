@@ -815,9 +815,13 @@ app.post('/webhook/zapi', async (req, res) => {
             return;
           }
 
-          const transcricao = await audio.transcreverAudio(url);
+          let transcricao;
+          try {
+            transcricao = await audio.transcreverAudio(url);
+          } catch (errTransc) {
+            console.error('[AUDIO-NPL] Erro na transcricao:', errTransc.message);
+          }
           if (!transcricao) {
-            console.error('[AUDIO-NPL] Falha na transcricao');
             await whatsapp.sendText(phone, 'Desculpe, nao consegui ouvir seu audio. Pode digitar ou enviar novamente?');
             return;
           }
@@ -1071,7 +1075,8 @@ app.post('/api/documentos/cobrar', requireApiKey, async (req, res) => {
     await whatsapp.sendText(phone, msg);
     res.json({ ok: true, msg: 'Cobrança enviada ao cliente.' });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[DOCS-NPL] Erro ao cobrar:', e.message);
+    res.status(500).json({ error: 'Erro ao cobrar documentos' });
   }
 });
 
