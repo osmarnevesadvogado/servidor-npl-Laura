@@ -125,7 +125,7 @@ async function gerarAudioOpenAI(texto) {
       model: 'tts-1',
       voice: 'nova',
       input: textoLimitado,
-      response_format: 'mp3',
+      response_format: 'opus',
       speed: 1.0
     });
 
@@ -133,7 +133,7 @@ async function gerarAudioOpenAI(texto) {
     const base64 = Buffer.from(arrayBuffer).toString('base64');
 
     console.log('[AUDIO-NPL] OpenAI TTS áudio gerado (fallback)');
-    return `data:audio/mpeg;base64,${base64}`;
+    return `data:audio/ogg;base64,${base64}`;
 
   } catch (e) {
     console.error('[AUDIO-NPL] Erro OpenAI TTS:', e.message);
