@@ -20,8 +20,7 @@ async function getOrCreateConversa(phone) {
     .eq('telefone', tel)
     .eq('status', 'ativa')
     .eq('escritorio', ESC)
-    .or(`instancia.eq.${INST},instancia.is.null`)
-    .order('criado_em', { ascending: false })
+        .order('criado_em', { ascending: false })
     .limit(1)
     .single();
 
@@ -82,8 +81,7 @@ async function getOrCreateLead(phone, nome) {
     .select('*')
     .eq('telefone', tel)
     .eq('escritorio', ESC)
-    .or(`instancia.eq.${INST},instancia.is.null`)
-    .limit(1)
+        .limit(1)
     .single();
 
   if (lead) return lead;
@@ -194,8 +192,7 @@ async function getEligibleConversas() {
     .select('id, telefone, lead_id, leads(id, nome, tese_interesse, etapa_funil, telefone, followup_tipo)')
     .eq('status', 'ativa')
     .eq('escritorio', ESC)
-    .or(`instancia.eq.${INST},instancia.is.null`)
-    .not('lead_id', 'is', null);
+        .not('lead_id', 'is', null);
 
   if (!data) return [];
 
@@ -211,8 +208,7 @@ async function listConversas(limit = 50) {
     .from('conversas')
     .select('*, leads(nome, tese_interesse, etapa_funil)')
     .eq('escritorio', ESC)
-    .or(`instancia.eq.${INST},instancia.is.null`)
-    .order('criado_em', { ascending: false })
+        .order('criado_em', { ascending: false })
     .limit(limit);
   return data || [];
 }
@@ -227,11 +223,11 @@ async function getConversaMensagens(conversaId) {
 }
 
 async function getMetricas() {
-  const { data: leads } = await supabase.from('leads').select('etapa_funil, criado_em').eq('escritorio', ESC).or(`instancia.eq.${INST},instancia.is.null`);
+  const { data: leads } = await supabase.from('leads').select('etapa_funil, criado_em').eq('escritorio', ESC);
   const etapas = { novo: 0, contato: 0, proposta: 0, convertido: 0, perdido: 0 };
   (leads || []).forEach(l => { if (etapas[l.etapa_funil] !== undefined) etapas[l.etapa_funil]++; });
 
-  const { data: conversas } = await supabase.from('conversas').select('id, criado_em').eq('status', 'ativa').eq('escritorio', ESC).or(`instancia.eq.${INST},instancia.is.null`);
+  const { data: conversas } = await supabase.from('conversas').select('id, criado_em').eq('status', 'ativa').eq('escritorio', ESC);
 
   let eventos = [];
   try {
@@ -460,8 +456,7 @@ async function getRelatorioSemanal() {
     .from('leads')
     .select('id, nome, tese_interesse, etapa_funil')
     .eq('escritorio', ESC)
-    .or(`instancia.eq.${INST},instancia.is.null`)
-    .gte('criado_em', semanaAtrasISO);
+        .gte('criado_em', semanaAtrasISO);
 
   const convertidos = (leadsNovos || []).filter(l => l.etapa_funil === 'convertido');
 
@@ -488,8 +483,7 @@ async function getRelatorioSemanal() {
     .from('leads')
     .select('id')
     .eq('escritorio', ESC)
-    .or(`instancia.eq.${INST},instancia.is.null`)
-    .not('etapa_funil', 'in', '("convertido","perdido")');
+        .not('etapa_funil', 'in', '("convertido","perdido")');
 
   const { data: recebidos } = await supabase
     .from('financeiro')
