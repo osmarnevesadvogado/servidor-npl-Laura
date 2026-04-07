@@ -729,6 +729,18 @@ app.post('/webhook/zapi', async (req, res) => {
       if (phone) {
         pauseAI(phone, 30);
         console.log(`[MANUAL-NPL] Atendente respondeu para ${phone} - IA pausada 30min`);
+
+        // Criar conversa/lead se for primeiro contato (outbound)
+        try {
+          const text = body.text?.message || body.body || '';
+          const conversa = await db.getOrCreateConversa(phone);
+          await db.getOrCreateLead(phone);
+          if (text && conversa) {
+            await db.saveMessage(conversa.id, 'assistant', text, { manual: true });
+          }
+        } catch (e) {
+          console.log('[MANUAL-NPL] Erro ao criar conversa outbound:', e.message);
+        }
       }
       return res.json({ status: 'manual_detected' });
     }
