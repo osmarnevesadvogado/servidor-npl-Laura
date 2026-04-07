@@ -288,6 +288,11 @@ function buildFichaLead(lead, history, contexto) {
   const temDocumentos = /(documento|contracheque|contrato|comprovante|mensagen|prova|print|foto)/i.test(allText) && history.length > 4;
   const temAdvogado = /(advogado|advogada|outro advogado|ja procur)/i.test(allText) && history.length > 4;
 
+  // Detectar BLOQUEIOS — casos que NÃO devem ser agendados
+  const ePrefeitura = /(prefeitura|governo municipal|orgao municipal|órgão municipal|servidor municipal|servidor público|servidor publico|camara municipal|câmara municipal)/i.test(allText);
+  const eGoverno = /(governo|servidor estadual|servidor federal|orgao publico|órgão público)/i.test(allText) && !/(empresa privada|privado|clt)/i.test(allText);
+  const semInteresse = /(nao quero|não quero|nao tenho interesse|não tenho interesse|so queria saber|só queria saber|obrigado mas nao|obrigado mas não|nao preciso|não preciso)/i.test(allText);
+
   const triagemItens = [];
   if (temTempo) triagemItens.push('tempo de trabalho');
   if (temCarteira) triagemItens.push('carteira/registro');
@@ -295,6 +300,12 @@ function buildFichaLead(lead, history, contexto) {
   else if (temPrazo) triagemItens.push('prazo desde saida');
   if (temDocumentos) triagemItens.push('documentos');
   if (temAdvogado) triagemItens.push('advogado anterior');
+
+  // Detectar bloqueios e adicionar alertas CRITICOS na ficha
+  const bloqueios = [];
+  if (ePrefeitura) bloqueios.push('PREFEITURA/GOVERNO MUNICIPAL — NAO AGENDAR. Informe que o escritorio e especializado em CLT privada.');
+  if (eGoverno) bloqueios.push('POSSIVEL SERVIDOR PUBLICO — Confirme se e empresa privada ou governo antes de agendar.');
+  if (semInteresse) bloqueios.push('LEAD SEM INTERESSE — NAO insista, encerre educadamente.');
 
   const triagemCompleta = temNome && temTempo && temCarteira && temPrazo;
   const triagemMinima = temNome && (temTempo || temPrazo); // minimo para avaliar viabilidade
@@ -309,8 +320,19 @@ function buildFichaLead(lead, history, contexto) {
     if (!temPrazo) linhas.push(`- FALTA: ha quanto tempo saiu da empresa (CRITICO para prazo)`);
   }
 
+  // Alertar bloqueios na ficha
+  if (bloqueios.length > 0) {
+    linhas.push(`\n⚠ BLOQUEIO DETECTADO:`);
+    bloqueios.forEach(b => linhas.push(`- ${b}`));
+    linhas.push(`- SIGA AS INSTRUCOES DE BLOQUEIO DO PROMPT. NAO ofereca consulta.`);
+  }
+
   // Proximo passo
-  if (contexto && contexto.tipo === 'cliente') {
+  if (bloqueios.length > 0 && !semInteresse) {
+    linhas.push(`\nPROXIMO PASSO: BLOQUEIO. Informe o lead educadamente conforme as regras. NAO agende.`);
+  } else if (semInteresse) {
+    linhas.push(`\nPROXIMO PASSO: Lead sem interesse. Despeca-se educadamente. NAO insista.`);
+  } else if (contexto && contexto.tipo === 'cliente') {
     linhas.push(`\nPROXIMO PASSO: E CLIENTE. Atenda conforme o pedido. Se quiser agendar, ofereca horarios.`);
   } else if (contexto && contexto.tipo === 'cliente_processo') {
     // Proximo passo ja foi definido no bloco cliente_processo acima, nao sobrescrever
