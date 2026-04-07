@@ -311,11 +311,9 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
     await db.saveMessage(conversa.id, 'assistant', reply);
 
     // Se Laura confirmou agendamento, criar evento no Google Calendar
+    // Só dispara quando Laura usa "Agendado!" (formato definido no prompt)
     const replyLower = reply.toLowerCase();
-    const agendouConsulta = replyLower.includes('agendado') || replyLower.includes('agendada') ||
-      replyLower.includes('consulta marcada') || replyLower.includes('confirmado') ||
-      replyLower.includes('reservado') || replyLower.includes('horário confirmado') ||
-      (replyLower.includes('consulta') && (replyLower.includes('dia ') || replyLower.includes('às ')));
+    const agendouConsulta = replyLower.includes('agendado!');
     if (calendar && agendouConsulta) {
       // Verificar se já agendou nesta conversa (evitar double booking)
       const agendamentoExistente = await verificarJaAgendou(phone);
@@ -323,7 +321,9 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
         console.log(`[CALENDAR-NPL] BLOQUEADO: ${phone} ja agendou recentemente (${agendamentoExistente.data})`);
       } else {
       try {
-        const slot = await calendar.encontrarSlot(combinedText, phone);
+        // Buscar slot usando a RESPOSTA DA LAURA (que tem o horário confirmado)
+        // e o texto do lead como fallback
+        const slot = await calendar.encontrarSlot(reply, phone) || await calendar.encontrarSlot(combinedText, phone);
         if (slot) {
           const nome = lead?.nome || 'Lead';
           const email = lead?.email || null;

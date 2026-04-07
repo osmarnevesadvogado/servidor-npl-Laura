@@ -510,14 +510,15 @@ async function criarConsulta(nome, telefone, email, dataHora, formato = 'online'
 
 // ===== INTERPRETAR TEXTO DO LEAD =====
 
-async function encontrarSlot(textoLead, phoneAtual = null) {
-  const slots = await getHorariosDisponiveis(7, phoneAtual);
+async function encontrarSlot(texto, phoneAtual = null) {
+  const slots = await getHorariosDisponiveis(10, phoneAtual);
   if (slots.length === 0) return null;
 
-  const lower = textoLead.toLowerCase();
+  const lower = texto.toLowerCase();
 
+  // Extrair dia da semana
   const diasSemana = {
-    'segunda': 1, 'terça': 2, 'quarta': 3, 'quinta': 4, 'sexta': 5,
+    'segunda': 1, 'terça': 2, 'terca': 2, 'quarta': 3, 'quinta': 4, 'sexta': 5,
     'seg': 1, 'ter': 2, 'qua': 3, 'qui': 4, 'sex': 5
   };
 
@@ -529,23 +530,44 @@ async function encontrarSlot(textoLead, phoneAtual = null) {
     }
   }
 
+  // Extrair data explícita (DD/MM ou "dia DD")
+  let dataExplicita = null;
+  const matchData = lower.match(/(\d{1,2})\/(\d{1,2})/) || lower.match(/dia\s+(\d{1,2})(?:\s+de\s+)?/);
+  if (matchData) {
+    const dia = parseInt(matchData[1]);
+    const mes = matchData[2] ? parseInt(matchData[2]) - 1 : agoraBelem().getUTCMonth();
+    const ano = agoraBelem().getUTCFullYear();
+    dataExplicita = new Date(Date.UTC(ano, mes, dia));
+  }
+
   const belemAgora = agoraBelem();
   if (lower.includes('amanhã') || lower.includes('amanha')) {
     const amanha = new Date(belemAgora);
     amanha.setUTCDate(amanha.getUTCDate() + 1);
     diaAlvo = amanha.getUTCDay();
+    dataExplicita = amanha;
   }
   if (lower.includes('hoje')) {
     diaAlvo = belemAgora.getUTCDay();
+    dataExplicita = belemAgora;
   }
 
+  // Extrair hora
   let horaAlvo = null;
-  const horaMatch = lower.match(/(\d{1,2})\s*(?:h|hrs?|horas?)?/);
+  const horaMatch = lower.match(/(\d{1,2})\s*(?:h|hrs?|horas?)/);
   if (horaMatch) {
     horaAlvo = parseInt(horaMatch[1]);
-    // Validar contra horários válidos
     const horasValidas = getHorasDoDia();
     if (!horasValidas.includes(horaAlvo)) horaAlvo = null;
+  }
+  // Fallback: "às DD" sem sufixo h
+  if (!horaAlvo) {
+    const asMatch = lower.match(/[àa]s\s+(\d{1,2})/);
+    if (asMatch) {
+      const h = parseInt(asMatch[1]);
+      const horasValidas = getHorasDoDia();
+      if (horasValidas.includes(h)) horaAlvo = h;
+    }
   }
 
   if (lower.includes('manhã') || lower.includes('manha') || lower.includes('de manhã')) {
@@ -555,8 +577,18 @@ async function encontrarSlot(textoLead, phoneAtual = null) {
     horaAlvo = horaAlvo || 15;
   }
 
+  // Filtrar por data explícita (mais preciso)
   let candidatos = slots;
-  if (diaAlvo !== null) {
+  if (dataExplicita) {
+    const diaExpl = dataExplicita.getUTCDate();
+    const mesExpl = dataExplicita.getUTCMonth();
+    const filtrados = slots.filter(s => {
+      const belem = new Date(s.inicio.getTime() + (UTC_OFFSET * 60 * 60 * 1000));
+      return belem.getUTCDate() === diaExpl && belem.getUTCMonth() === mesExpl;
+    });
+    if (filtrados.length > 0) candidatos = filtrados;
+  } else if (diaAlvo !== null) {
+    // Filtrar por dia da semana
     const filtrados = slots.filter(s => {
       const belem = new Date(s.inicio.getTime() + (UTC_OFFSET * 60 * 60 * 1000));
       return belem.getUTCDay() === diaAlvo;
@@ -564,6 +596,7 @@ async function encontrarSlot(textoLead, phoneAtual = null) {
     if (filtrados.length > 0) candidatos = filtrados;
   }
 
+  // Ordenar por proximidade de hora
   if (horaAlvo !== null && candidatos.length > 0) {
     candidatos.sort((a, b) => {
       const horaA = new Date(a.inicio.getTime() + (UTC_OFFSET * 60 * 60 * 1000)).getUTCHours();
@@ -572,7 +605,14 @@ async function encontrarSlot(textoLead, phoneAtual = null) {
     });
   }
 
-  return candidatos.length > 0 ? candidatos[0] : slots[0];
+  // Só retorna se encontrou correspondência real (dia OU hora)
+  // Se não encontrou nenhum filtro, retorna null (não chutar slot aleatório)
+  if (diaAlvo === null && dataExplicita === null && horaAlvo === null) {
+    console.log('[CALENDAR-NPL] encontrarSlot: nenhum dia/hora identificado no texto');
+    return null;
+  }
+
+  return candidatos.length > 0 ? candidatos[0] : null;
 }
 
 // ===== BUSCAR CONSULTAS DO DIA (para lembretes) =====
