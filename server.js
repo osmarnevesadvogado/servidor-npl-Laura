@@ -717,7 +717,7 @@ app.post('/webhook/zapi', async (req, res) => {
     // Limitar tamanho da mensagem para evitar abuso
     if (text.length > 5000) text = text.slice(0, 5000);
     const senderName = body.senderName || body.notifyName || '';
-    const audioUrl = body.audio?.audioUrl || body.audioMessage?.url || body.audio?.url || null;
+    const audioUrl = body.audio?.audioUrl || body.audioMessage?.url || body.audio?.url || body.audio?.mediaUrl || body.audioMessage?.audioUrl || body.audioMessage?.mediaUrl || null;
     const isAudio = body.isAudio === true || !!body.audioMessage || (!!audioUrl && audioUrl.length > 10);
 
     // Detectar mídia (imagem, documento, vídeo)
@@ -770,8 +770,9 @@ app.post('/webhook/zapi', async (req, res) => {
           const conversa = await db.getOrCreateConversa(phone);
 
           // Salvar áudio com URL para o CRM poder reproduzir
-          if (url) {
-            await db.saveMessage(conversa.id, 'user', '🎤 Áudio', { media_url: url, media_type: 'audio' });
+          await db.saveMessage(conversa.id, 'user', '🎤 Áudio', { media_url: url || null, media_type: 'audio' });
+          if (!url) {
+            console.log('[AUDIO-NPL] Áudio sem URL. Body keys:', Object.keys(body).join(', '));
           }
 
           // Se IA pausada, não transcrever/responder
@@ -1101,10 +1102,13 @@ app.post('/api/enviar-audio', requireApiKey, async (req, res) => {
     const result = await whatsapp.sendAudio(phone, base64Data);
 
     if (conversaId) {
+      // Salvar com media_url para o player do CRM funcionar
+      const mediaUrl = audioBase64.startsWith('data:') ? audioBase64 : `data:audio/ogg;base64,${base64Data}`;
       await db.saveMessage(conversaId, 'assistant', '🎤 Áudio enviado', {
         manual: true,
         usuario_nome: usuario_nome || null,
-        media_type: 'audio'
+        media_type: 'audio',
+        media_url: mediaUrl
       });
     }
 
