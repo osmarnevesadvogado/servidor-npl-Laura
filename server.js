@@ -932,6 +932,13 @@ app.post('/api/retomar', requireApiKey, (req, res) => {
   res.json({ ok: true, msg: `IA retomada para ${phone}` });
 });
 
+app.get('/api/pausar/status', (req, res) => {
+  const phone = req.query.phone;
+  if (!phone) return res.status(400).json({ error: 'phone obrigatorio' });
+  const paused = isAIPaused(phone);
+  res.json({ phone: whatsapp.cleanPhone(phone), paused });
+});
+
 app.get('/api/metricas', async (req, res) => {
   try {
     res.json(await db.getMetricas());
