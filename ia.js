@@ -435,9 +435,23 @@ async function generateResponse(history, userMessage, conversaId, lead, contexto
     }
   }
 
+  // A/B Testing — injetar variante na ficha
+  let abSection = '';
+  try {
+    const { getVarianteAB, AB_VARIANTES } = require('./database');
+    const variante = getVarianteAB(lead);
+    const ab = AB_VARIANTES[variante];
+    if (ab) {
+      abSection = `\nABORDAGEM DE VENDA (use estas frases ao oferecer consulta ou lidar com objecoes de custo):
+- Oferta: "${ab.frase_oferta}"
+- Custo: "${ab.frase_custo}"`;
+    }
+  } catch (e) {}
+
   const fichaCompleta = `===== FICHA DO LEAD (CONSULTE ANTES DE RESPONDER) =====
 ${fichaLead}
 ${agendaSection}
+${abSection}
 ${licoesTexto}
 =========================
 

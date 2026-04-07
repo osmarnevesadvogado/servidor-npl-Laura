@@ -86,6 +86,10 @@ async function getOrCreateLead(phone, nome) {
 
   if (lead) return lead;
 
+  // Atribuir variante A/B ao criar lead
+  const tempId = Date.now().toString();
+  const variante = atribuirVarianteAB(tempId);
+
   const { data: newLead } = await supabase
     .from('leads')
     .insert({
@@ -96,6 +100,8 @@ async function getOrCreateLead(phone, nome) {
       escritorio: ESC,
       instancia: INST,
       tese_interesse: 'Trabalhista',
+      ab_variante: variante,
+      score: 0,
       data_primeiro_contato: new Date().toISOString()
     })
     .select()
@@ -505,6 +511,205 @@ async function getRelatorioSemanal() {
   };
 }
 
+// ===== LEAD SCORING =====
+// Calcula score do lead baseado em comportamento (chamado a cada mensagem)
+async function calcularScore(leadId, conversaId) {
+  if (!leadId) return 0;
+  try {
+    const { data: msgs } = await supabase
+      .from('mensagens')
+      .select('role, content, criado_em, media_type')
+      .eq('conversa_id', conversaId)
+      .order('criado_em', { ascending: true });
+
+    if (!msgs || msgs.length === 0) return 0;
+
+    let score = 0;
+    const detalhes = [];
+
+    // Quantidade de mensagens do lead (engajamento)
+    const userMsgs = msgs.filter(m => m.role === 'user');
+    if (userMsgs.length >= 3) { score += 10; detalhes.push('engajado(3+msgs)'); }
+    if (userMsgs.length >= 6) { score += 10; detalhes.push('muito_engajado(6+msgs)'); }
+
+    // Velocidade de resposta (média entre msgs)
+    if (userMsgs.length >= 2) {
+      const tempos = [];
+      for (let i = 1; i < Math.min(userMsgs.length, 5); i++) {
+        const diff = new Date(userMsgs[i].criado_em) - new Date(userMsgs[i-1].criado_em);
+        tempos.push(diff);
+      }
+      const mediaMinutos = tempos.reduce((a, b) => a + b, 0) / tempos.length / 60000;
+      if (mediaMinutos < 2) { score += 15; detalhes.push('resposta_rapida'); }
+      else if (mediaMinutos < 10) { score += 5; detalhes.push('resposta_moderada'); }
+    }
+
+    // Tamanho das mensagens (mensagens longas = mais interesse)
+    const mediaChars = userMsgs.reduce((s, m) => s + m.content.length, 0) / userMsgs.length;
+    if (mediaChars > 50) { score += 5; detalhes.push('msgs_detalhadas'); }
+
+    // Enviou áudio (mais engajado)
+    if (userMsgs.some(m => m.media_type === 'audio' || m.content.includes('Áudio'))) {
+      score += 10; detalhes.push('enviou_audio');
+    }
+
+    // Enviou documento/foto (forte interesse)
+    if (userMsgs.some(m => m.media_type === 'image' || m.media_type === 'document')) {
+      score += 15; detalhes.push('enviou_documento');
+    }
+
+    // Keywords de urgência
+    const allText = userMsgs.map(m => m.content).join(' ').toLowerCase();
+    if (/(urgente|preciso|rápido|rapido|logo|agora|hoje|amanhã|amanha)/.test(allText)) {
+      score += 15; detalhes.push('urgencia');
+    }
+    if (/(quero agendar|quero marcar|pode marcar|marca pra mim|vamos agendar)/.test(allText)) {
+      score += 20; detalhes.push('quer_agendar');
+    }
+
+    // Keywords negativas
+    if (/(vou pensar|depois|agora nao|agora não|talvez|não sei|nao sei)/.test(allText)) {
+      score -= 10; detalhes.push('hesitante');
+    }
+    if (/(nao quero|não quero|sem interesse|nao preciso|não preciso)/.test(allText)) {
+      score -= 30; detalhes.push('sem_interesse');
+    }
+
+    score = Math.max(0, Math.min(100, score));
+
+    // Salvar score no lead
+    await supabase.from('leads').update({
+      score,
+      score_detalhes: detalhes.join(','),
+      atualizado_em: new Date().toISOString()
+    }).eq('id', leadId);
+
+    return score;
+  } catch (e) {
+    console.error('[SCORING-NPL] Erro:', e.message);
+    return 0;
+  }
+}
+
+// ===== A/B TESTING =====
+// Variantes de abordagem para testar conversão
+const AB_VARIANTES = {
+  A: {
+    nome: 'consulta_gratuita',
+    frase_oferta: 'A consulta inicial e gratuita e sem compromisso.',
+    frase_custo: 'Na maioria dos casos, o escritorio so cobra se ganhar a causa.'
+  },
+  B: {
+    nome: 'sem_risco',
+    frase_oferta: 'Voce nao paga nada pela primeira consulta.',
+    frase_custo: 'Sem risco pra voce: o escritorio so recebe se voce ganhar.'
+  }
+};
+
+function atribuirVarianteAB(leadId) {
+  // Atribuir A ou B baseado no ID do lead (determinístico, não muda)
+  const hash = (leadId || '').toString().split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  return hash % 2 === 0 ? 'A' : 'B';
+}
+
+function getVarianteAB(lead) {
+  if (lead?.ab_variante) return lead.ab_variante;
+  return atribuirVarianteAB(lead?.id);
+}
+
+// ===== ANALYTICS DE CONVERSÃO =====
+async function getAnalytics(dias = 30) {
+  try {
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+
+    // Leads por etapa (período)
+    const { data: leads } = await supabase
+      .from('leads')
+      .select('id, etapa_funil, ab_variante, score, criado_em')
+      .eq('escritorio', ESC)
+      .gte('criado_em', desde);
+
+    const total = (leads || []).length;
+    const etapas = { novo: 0, contato: 0, proposta: 0, convertido: 0, perdido: 0 };
+    const porVariante = { A: { total: 0, convertido: 0 }, B: { total: 0, convertido: 0 } };
+
+    for (const l of (leads || [])) {
+      if (etapas[l.etapa_funil] !== undefined) etapas[l.etapa_funil]++;
+      const v = l.ab_variante || 'A';
+      if (porVariante[v]) {
+        porVariante[v].total++;
+        if (l.etapa_funil === 'convertido' || l.etapa_funil === 'proposta') {
+          porVariante[v].convertido++;
+        }
+      }
+    }
+
+    // Eventos do período
+    const { data: eventos } = await supabase
+      .from('metricas')
+      .select('evento, criado_em')
+      .eq('escritorio', ESC)
+      .gte('criado_em', desde);
+
+    const eventosCont = {};
+    for (const e of (eventos || [])) {
+      eventosCont[e.evento] = (eventosCont[e.evento] || 0) + 1;
+    }
+
+    // Scores médios por etapa
+    const scoresPorEtapa = {};
+    for (const l of (leads || [])) {
+      if (!scoresPorEtapa[l.etapa_funil]) scoresPorEtapa[l.etapa_funil] = [];
+      scoresPorEtapa[l.etapa_funil].push(l.score || 0);
+    }
+    const scoresMedias = {};
+    for (const [etapa, scores] of Object.entries(scoresPorEtapa)) {
+      scoresMedias[etapa] = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+    }
+
+    // Funil de conversão
+    const funil = {
+      leads_novos: total,
+      fizeram_triagem: etapas.contato + etapas.proposta + etapas.convertido,
+      receberam_oferta: etapas.proposta + etapas.convertido,
+      agendaram: eventosCont['consulta_agendada'] || 0,
+      perdidos: etapas.perdido
+    };
+
+    // Taxas de conversão
+    const taxas = {
+      triagem: total > 0 ? ((funil.fizeram_triagem / total) * 100).toFixed(1) + '%' : '0%',
+      oferta: funil.fizeram_triagem > 0 ? ((funil.receberam_oferta / funil.fizeram_triagem) * 100).toFixed(1) + '%' : '0%',
+      agendamento: funil.receberam_oferta > 0 ? ((funil.agendaram / funil.receberam_oferta) * 100).toFixed(1) + '%' : '0%',
+      perda: total > 0 ? ((funil.perdidos / total) * 100).toFixed(1) + '%' : '0%'
+    };
+
+    // A/B testing resultados
+    const abResultados = {};
+    for (const [v, dados] of Object.entries(porVariante)) {
+      abResultados[v] = {
+        total: dados.total,
+        convertido: dados.convertido,
+        taxa: dados.total > 0 ? ((dados.convertido / dados.total) * 100).toFixed(1) + '%' : '0%',
+        nome_variante: AB_VARIANTES[v]?.nome || v
+      };
+    }
+
+    return {
+      periodo: `${dias} dias`,
+      funil,
+      taxas,
+      leads_por_etapa: etapas,
+      score_medio_por_etapa: scoresMedias,
+      ab_testing: abResultados,
+      eventos: eventosCont
+    };
+  } catch (e) {
+    console.error('[ANALYTICS-NPL] Erro:', e.message);
+    return null;
+  }
+}
+
 module.exports = {
   supabase,
   getOrCreateConversa,
@@ -526,5 +731,10 @@ module.exports = {
   findClienteByPhone,
   findCasoByCliente,
   getContextoCompleto,
-  getRelatorioSemanal
+  getRelatorioSemanal,
+  calcularScore,
+  getVarianteAB,
+  atribuirVarianteAB,
+  AB_VARIANTES,
+  getAnalytics
 };

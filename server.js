@@ -428,6 +428,13 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       await db.updateLead(lead.id, { etapa_funil: 'contato' });
     }
 
+    // Calcular score do lead (async, não bloqueia)
+    if (lead) {
+      db.calcularScore(lead.id, conversa.id).catch(e =>
+        console.log('[SCORING-NPL] Erro:', e.message)
+      );
+    }
+
     // Metrica de primeiro contato
     if (history.length <= 1) {
       await db.trackEvent(conversa.id, lead?.id, 'primeiro_contato', senderName);
@@ -916,6 +923,22 @@ app.get('/api/metricas', async (req, res) => {
   } catch (e) {
     console.error('[METRICAS] Erro:', e.message);
     res.status(500).json({ error: 'Erro ao buscar metricas' });
+  }
+});
+
+// ===== ANALYTICS DE CONVERSÃO =====
+app.get('/api/analytics', async (req, res) => {
+  try {
+    const dias = parseInt(req.query.dias) || 30;
+    const analytics = await db.getAnalytics(dias);
+    if (analytics) {
+      res.json(analytics);
+    } else {
+      res.status(500).json({ error: 'Erro ao gerar analytics' });
+    }
+  } catch (e) {
+    console.error('[ANALYTICS] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar analytics' });
   }
 });
 
