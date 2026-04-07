@@ -123,21 +123,21 @@ async function verificarJaAgendou(phone) {
   try {
     const { cleanPhone } = require('./whatsapp');
     const tel = cleanPhone(phone);
-    // Buscar no banco se já tem consulta agendada nas últimas 24h para este telefone
-    const ontem = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Buscar no banco se já tem consulta agendada nas últimas 48h para este telefone
+    const limite = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     const { data } = await db.supabase
       .from('metricas')
-      .select('detalhes, criado_em')
+      .select('conversa_id, detalhes, criado_em')
       .eq('evento', 'consulta_agendada')
       .eq('escritorio', 'npl')
-      .gte('criado_em', ontem)
+      .gte('criado_em', limite)
       .order('criado_em', { ascending: false })
       .limit(20);
 
-    if (!data) return null;
-    // Verificar se algum registro é deste telefone (telefone aparece nos detalhes via lead)
+    if (!data || data.length === 0) return null;
+
     for (const m of data) {
-      // Buscar conversa vinculada
+      if (!m.conversa_id) continue;
       const { data: conv } = await db.supabase
         .from('conversas')
         .select('telefone')
@@ -311,15 +311,24 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
     await db.saveMessage(conversa.id, 'assistant', reply);
 
     // Se Laura confirmou agendamento, criar evento no Google Calendar
-    // Dispara quando Laura usa palavras de confirmação E menciona dia/hora concreto
     const replyLower = reply.toLowerCase();
-    const temConfirmacao = replyLower.includes('agendado') || replyLower.includes('agendada') ||
-      replyLower.includes('consulta marcada') || replyLower.includes('consulta confirmada');
+
+    // Verificar bloqueios no histórico (mesma lógica do ia.js)
+    const allTextBloqueio = (history || []).map(m => m.content).join(' ').toLowerCase() + ' ' + combinedText.toLowerCase();
+    const temBloqueio = /(prefeitura|governo municipal|orgao municipal|órgão municipal|servidor municipal|câmara municipal|camara municipal)/i.test(allTextBloqueio);
+
+    // Detectar confirmação NOVA (não referência a consulta existente)
+    const temConfirmacao = replyLower.includes('agendado!') ||
+      (replyLower.includes('agendado') && !replyLower.includes('já está agendad') && !replyLower.includes('ja esta agendad')) ||
+      (replyLower.includes('agendada') && !replyLower.includes('já está agendad') && !replyLower.includes('ja esta agendad'));
     const temDataHora = /(\d{1,2})\s*(?:h|hrs?|horas?)/.test(replyLower) ||
       /[àa]s\s+\d{1,2}/.test(replyLower) ||
       /\d{1,2}\/\d{1,2}/.test(replyLower) ||
       /(segunda|terça|terca|quarta|quinta|sexta|amanhã|amanha|hoje)/.test(replyLower);
-    const agendouConsulta = temConfirmacao && temDataHora;
+    // Palavras que indicam referência (não confirmação nova)
+    const eReferencia = replyLower.includes('já está') || replyLower.includes('ja esta') ||
+      replyLower.includes('desculpa') || replyLower.includes('confusão') || replyLower.includes('confusao');
+    const agendouConsulta = temConfirmacao && temDataHora && !eReferencia && !temBloqueio;
     if (calendar && agendouConsulta) {
       // Verificar se é remarcação (lead pediu para mudar/trocar/remarcar)
       const allTextLower = (history || []).slice(-4).map(m => m.content).join(' ').toLowerCase() + ' ' + combinedText.toLowerCase();

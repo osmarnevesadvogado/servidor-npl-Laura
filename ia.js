@@ -297,8 +297,10 @@ function buildFichaLead(lead, history, contexto) {
   const temAdvogado = /(advogado|advogada|outro advogado|ja procur)/i.test(allText) && history.length > 4;
 
   // Detectar BLOQUEIOS — casos que NÃO devem ser agendados
-  const ePrefeitura = /(prefeitura|governo municipal|orgao municipal|órgão municipal|servidor municipal|servidor público|servidor publico|camara municipal|câmara municipal)/i.test(allText);
-  const eGoverno = /(governo|servidor estadual|servidor federal|orgao publico|órgão público)/i.test(allText) && !/(empresa privada|privado|clt)/i.test(allText);
+  // Detectar PREFEITURA/GOVERNO — cuidado com falsos positivos
+  // "serviços gerais", "servidor de internet" etc. NÃO são governo
+  const ePrefeitura = /(prefeitura|governo municipal|orgao municipal|órgão municipal|servidor municipal|câmara municipal|camara municipal|trabalhei (na|pra|para|pro) (a )?prefeitura)/i.test(allText);
+  const eGoverno = /(servidor (público|publico|estadual|federal)|trabalh\w+ (no|pro|pra|para o) governo|funcionar\w+ public\w+|orgao publico|órgão público)/i.test(allText) && !/(empresa privada|privado|clt|carteira assinada)/i.test(allText);
   const semInteresse = /(nao quero|não quero|nao tenho interesse|não tenho interesse|so queria saber|só queria saber|obrigado mas nao|obrigado mas não|nao preciso|não preciso)/i.test(allText);
 
   const triagemItens = [];
