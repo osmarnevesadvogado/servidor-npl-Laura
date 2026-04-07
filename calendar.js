@@ -370,7 +370,7 @@ function formatarSlotDate(data) {
 // ===== SUGERIR HORÁRIOS (com reserva) =====
 
 async function sugerirHorarios(quantidade = 3, phoneAtual = null) {
-  const slots = await getHorariosDisponiveis(5, phoneAtual);
+  const slots = await getHorariosDisponiveis(10, phoneAtual);
 
   if (slots.length === 0) {
     return {

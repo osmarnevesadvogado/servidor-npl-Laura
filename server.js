@@ -116,31 +116,43 @@ setInterval(() => {
 const jaNotificouHot = new Set(); // phones já notificados como lead quente
 
 // ===== CONTROLE DE AGENDAMENTO ÚNICO POR CONVERSA =====
-// Evita que a Laura agende 2 consultas pro mesmo lead na mesma conversa
-const jaAgendou = new Map(); // phone -> { nome, data, colaboradora, timestamp }
+// Evita que a Laura agende 2 consultas pro mesmo lead
+// Persiste via métricas no banco para sobreviver a deploys
 
-function marcarAgendado(phone, nome, data, colaboradora) {
-  jaAgendou.set(phone, { nome, data, colaboradora, timestamp: Date.now() });
-}
+async function verificarJaAgendou(phone) {
+  try {
+    const { cleanPhone } = require('./whatsapp');
+    const tel = cleanPhone(phone);
+    // Buscar no banco se já tem consulta agendada nas últimas 24h para este telefone
+    const ontem = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data } = await db.supabase
+      .from('metricas')
+      .select('detalhes, criado_em')
+      .eq('evento', 'consulta_agendada')
+      .eq('escritorio', 'npl')
+      .gte('criado_em', ontem)
+      .order('criado_em', { ascending: false })
+      .limit(20);
 
-function verificarJaAgendou(phone) {
-  const agendamento = jaAgendou.get(phone);
-  if (!agendamento) return null;
-  // Expira depois de 24h (nova conversa pode agendar)
-  if (Date.now() - agendamento.timestamp > 24 * 60 * 60 * 1000) {
-    jaAgendou.delete(phone);
+    if (!data) return null;
+    // Verificar se algum registro é deste telefone (telefone aparece nos detalhes via lead)
+    for (const m of data) {
+      // Buscar conversa vinculada
+      const { data: conv } = await db.supabase
+        .from('conversas')
+        .select('telefone')
+        .eq('id', m.conversa_id)
+        .single();
+      if (conv && conv.telefone === tel) {
+        return { data: m.detalhes, timestamp: m.criado_em };
+      }
+    }
+    return null;
+  } catch (e) {
+    console.log('[AGENDAMENTO-NPL] Erro ao verificar duplicata:', e.message);
     return null;
   }
-  return agendamento;
 }
-
-// Limpar agendamentos expirados
-setInterval(() => {
-  const now = Date.now();
-  for (const [phone, ag] of jaAgendou) {
-    if (now - ag.timestamp > 24 * 60 * 60 * 1000) jaAgendou.delete(phone);
-  }
-}, 60 * 60 * 1000);
 
 // ===== RATE LIMIT =====
 const rateLimitMap = new Map();
@@ -306,9 +318,9 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       (replyLower.includes('consulta') && (replyLower.includes('dia ') || replyLower.includes('às ')));
     if (calendar && agendouConsulta) {
       // Verificar se já agendou nesta conversa (evitar double booking)
-      const agendamentoExistente = verificarJaAgendou(phone);
+      const agendamentoExistente = await verificarJaAgendou(phone);
       if (agendamentoExistente) {
-        console.log(`[CALENDAR-NPL] BLOQUEADO: ${phone} ja agendou (${agendamentoExistente.data} com ${agendamentoExistente.colaboradora})`);
+        console.log(`[CALENDAR-NPL] BLOQUEADO: ${phone} ja agendou recentemente (${agendamentoExistente.data})`);
       } else {
       try {
         const slot = await calendar.encontrarSlot(combinedText, phone);
@@ -318,7 +330,6 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
           const resultado = await calendar.criarConsulta(nome, phone, email, slot.inicio, 'online');
           if (resultado) {
             console.log(`[CALENDAR-NPL] Consulta CRIADA: ${nome} em ${resultado.inicio} com ${resultado.colaboradora}`);
-            marcarAgendado(phone, nome, resultado.inicio, resultado.colaboradora);
             try {
               await db.trackEvent(conversa.id, lead?.id, 'consulta_agendada', `${resultado.inicio} - ${resultado.colaboradora}`);
             } catch (e) {
@@ -475,6 +486,11 @@ async function checkFollowUps() {
       }
 
       async function sendFollowUp(msg, asAudio) {
+        // Validar que a mensagem é válida antes de enviar
+        if (!msg || msg.length < 15 || msg.toLowerCase().includes('não consigo') || msg.toLowerCase().includes('nao consigo') || msg.toLowerCase().includes('como assistente')) {
+          console.log(`[FOLLOWUP-NPL] Mensagem inválida descartada: "${msg?.slice(0, 60)}"`);
+          return;
+        }
         if (asAudio && audio) {
           const audioBase64 = await audio.gerarAudio(msg);
           if (audioBase64) {

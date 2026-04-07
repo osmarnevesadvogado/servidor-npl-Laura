@@ -49,13 +49,21 @@ async function sendText(phone, text) {
 
 async function sendAudio(phone, audioBase64) {
   try {
-    // Remover prefixo data:audio/... se existir
-    const base64Pure = audioBase64.includes(',') ? audioBase64.split(',')[1] : audioBase64;
+    // Se já tem prefixo data:audio/..., manter o formato original
+    // Se não tem, adicionar data:audio/ogg;base64 (formato nativo do WhatsApp)
+    let audioData;
+    if (audioBase64.startsWith('data:audio/')) {
+      audioData = audioBase64;
+    } else if (audioBase64.includes(',') && audioBase64.startsWith('data:')) {
+      audioData = audioBase64;
+    } else {
+      audioData = `data:audio/ogg;base64,${audioBase64}`;
+    }
 
     const res = await fetch(`${config.ZAPI_BASE}/send-audio`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Client-Token': config.ZAPI_CLIENT_TOKEN },
-      body: JSON.stringify({ phone: cleanPhone(phone), audio: `data:audio/mpeg;base64,${base64Pure}` })
+      body: JSON.stringify({ phone: cleanPhone(phone), audio: audioData })
     });
     const json = await res.json();
     if (json.error || json.Error) {
