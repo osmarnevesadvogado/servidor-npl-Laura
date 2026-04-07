@@ -34,7 +34,11 @@ async function sendText(phone, text) {
       body: JSON.stringify({ phone: cleanPhone(phone), message: text })
     });
     const json = await res.json();
-    console.log('[ZAPI-NPL] Mensagem enviada:', phone);
+    if (json.error || json.Error) {
+      console.error('[ZAPI-NPL] Erro ao enviar msg:', phone, JSON.stringify(json));
+    } else {
+      console.log('[ZAPI-NPL] Mensagem enviada:', phone);
+    }
     markBotSent(phone);
     return json;
   } catch (e) {
@@ -45,13 +49,20 @@ async function sendText(phone, text) {
 
 async function sendAudio(phone, audioBase64) {
   try {
+    // Remover prefixo data:audio/... se existir
+    const base64Pure = audioBase64.includes(',') ? audioBase64.split(',')[1] : audioBase64;
+
     const res = await fetch(`${config.ZAPI_BASE}/send-audio`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Client-Token': config.ZAPI_CLIENT_TOKEN },
-      body: JSON.stringify({ phone: cleanPhone(phone), audio: audioBase64 })
+      body: JSON.stringify({ phone: cleanPhone(phone), audio: `data:audio/mpeg;base64,${base64Pure}` })
     });
     const json = await res.json();
-    console.log('[ZAPI-NPL] Áudio enviado:', phone);
+    if (json.error || json.Error) {
+      console.error('[ZAPI-NPL] Erro ao enviar áudio:', JSON.stringify(json));
+    } else {
+      console.log('[ZAPI-NPL] Áudio enviado:', phone, json.zapiMessageId || '');
+    }
     markBotSent(phone);
     return json;
   } catch (e) {

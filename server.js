@@ -1096,14 +1096,12 @@ app.post('/api/enviar-audio', requireApiKey, async (req, res) => {
     const { phone, audioBase64, conversaId, usuario_nome } = req.body;
     if (!phone || !audioBase64) return res.status(400).json({ error: 'phone e audioBase64 obrigatorios' });
 
-    // Extrair base64 puro (remover prefixo data:audio/...)
-    const base64Data = audioBase64.includes(',') ? audioBase64.split(',')[1] : audioBase64;
-
-    const result = await whatsapp.sendAudio(phone, base64Data);
+    const result = await whatsapp.sendAudio(phone, audioBase64);
 
     if (conversaId) {
       // Salvar com media_url para o player do CRM funcionar
-      const mediaUrl = audioBase64.startsWith('data:') ? audioBase64 : `data:audio/ogg;base64,${base64Data}`;
+      const base64Pure = audioBase64.includes(',') ? audioBase64.split(',')[1] : audioBase64;
+      const mediaUrl = `data:audio/mpeg;base64,${base64Pure}`;
       await db.saveMessage(conversaId, 'assistant', '🎤 Áudio enviado', {
         manual: true,
         usuario_nome: usuario_nome || null,
