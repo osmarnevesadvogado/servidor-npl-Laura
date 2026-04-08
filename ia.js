@@ -33,8 +33,16 @@ Consulte a FICHA DO LEAD e siga esta logica. Voce NAO precisa seguir uma ordem r
    a) Tempo de trabalho na empresa
    b) Tinha carteira assinada?
    c) Ainda trabalha la ou ja saiu? Se saiu, ha quanto tempo? (CRITICO - prazo de 2 anos)
-   d) Empresa privada, prefeitura ou governo? (CRITICO - so atende CLT privado)
+   d) Era empresa privada, fazenda/sitio, prefeitura ou governo? (CRITICO)
+      - Empresa privada, fazenda, sitio, rural = ATENDEMOS (CLT)
+      - Prefeitura, governo, orgao publico = NAO atendemos (regime administrativo)
    Obs: Perguntas sobre documentos e advogado anterior sao OPCIONAIS na triagem. Podem ser tratadas na consulta.
+
+IMPORTANTE — TRABALHADOR RURAL:
+- Trabalhador rural (fazenda, sitio, roça, agropecuaria, usina, plantacao) e CLT e o escritorio ATENDE.
+- Casos rurais costumam ter valores ALTOS a receber (insalubridade, horas extras, falta de registro).
+- Trate com a mesma prioridade de qualquer outro caso trabalhista.
+- NAO confunda rural com servidor publico. Fazenda/sitio e empresa privada.
 
 4. AVALIACAO DO CASO — Assim que tiver info suficiente (nome + problema + tempo ou prazo), DE UMA AVALIACAO PRELIMINAR:
    - VIAVEL: "Pelo que voce me contou, [nome], seu caso e bem viavel. Com [tempo] de trabalho e [problema], voce tem direitos claros que podem ser cobrados. Na consulta gratuita o advogado vai calcular tudo que voce tem a receber. Temos horarios [dia] as [hora], fica bom pra voce?"
@@ -54,6 +62,7 @@ EMPATIA POR SITUACAO (use ao descobrir o problema — mostre que ENTENDE e que h
 - Assedio: "Isso e muito serio e voce nao precisa aceitar. O escritorio pode te orientar sobre as medidas cabiveis e o valor da indenizacao."
 - Salario atrasado: "Ninguem merece ficar sem receber. O escritorio pode te ajudar a cobrar tudo que e seu, com juros e correcao."
 - FGTS/Multa: "Esses sao direitos seus que nao podem ser ignorados. Podemos verificar e cobrar tudo."
+- Trabalho rural: "[nome], trabalhador rural tem muitos direitos que geralmente nao sao respeitados. Insalubridade, horas extras, falta de registro... o escritorio tem experiencia com casos rurais e os valores a receber costumam ser bem significativos."
 
 DETECCAO DE SENTIMENTO:
 - ANSIOSO/REVOLTADO -> "Fique tranquilo(a), [nome]. O escritorio ja ajudou muitos trabalhadores em situacao parecida e conseguiu resultados muito bons."
@@ -300,7 +309,7 @@ function buildFichaLead(lead, history, contexto) {
   // Detectar PREFEITURA/GOVERNO — cuidado com falsos positivos
   // "serviços gerais", "servidor de internet" etc. NÃO são governo
   const ePrefeitura = /(prefeitura|governo municipal|orgao municipal|órgão municipal|servidor municipal|câmara municipal|camara municipal|trabalhei (na|pra|para|pro) (a )?prefeitura)/i.test(allText);
-  const eGoverno = /(servidor (público|publico|estadual|federal)|trabalh\w+ (no|pro|pra|para o) governo|funcionar\w+ public\w+|orgao publico|órgão público)/i.test(allText) && !/(empresa privada|privado|clt|carteira assinada)/i.test(allText);
+  const eGoverno = /(servidor (público|publico|estadual|federal)|trabalh\w+ (no|pro|pra|para o) governo|funcionar\w+ public\w+|orgao publico|órgão público)/i.test(allText) && !/(empresa privada|privado|clt|carteira assinada|fazenda|sitio|sítio|rural|roça|roca|agropecuaria|agropecuária|usina|plantacao|plantação)/i.test(allText);
   const semInteresse = /(nao quero|não quero|nao tenho interesse|não tenho interesse|so queria saber|só queria saber|obrigado mas nao|obrigado mas não|nao preciso|não preciso)/i.test(allText);
 
   const triagemItens = [];
