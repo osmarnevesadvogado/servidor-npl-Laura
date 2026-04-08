@@ -287,8 +287,8 @@ function buildFichaLead(lead, history, contexto) {
       }
       if (temas.length > 0) {
         linhas.push(`\nHISTORICO ANTERIOR (lead ja conversou antes):`);
-        linhas.push(`- Mensagens anteriores do lead: "${temas.slice(-3).join('" / "')}"`);
-        linhas.push(`- IMPORTANTE: Demonstre que lembra da conversa anterior. Retome de onde parou.`);
+        linhas.push(`- Mensagens anteriores do lead: "${temas.slice(-8).join('" / "')}"`);
+        linhas.push(`- IMPORTANTE: Demonstre que lembra da conversa anterior. Retome de onde parou. NAO repita perguntas ja feitas.`);
       }
     }
   }
@@ -424,7 +424,7 @@ function trimResponse(text) {
 
 // ===== HISTÓRICO =====
 function buildRecentHistory(history) {
-  const recent = history.slice(-10);
+  const recent = history.slice(-30);
   return recent.map(m => ({ role: m.role, content: m.content }));
 }
 
