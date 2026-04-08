@@ -104,6 +104,55 @@ Calculado a cada mensagem do lead. Critérios:
 - Atribuída ao criar lead, determinística pelo ID
 - Resultados visíveis em /api/analytics
 
+## Modelo de IA
+- **Claude Sonnet 4** (claude-sonnet-4-20250514) — modelo principal para conversas
+- MAX_TOKENS: 800 (respostas objetivas)
+- Janela de contexto: 150 mensagens enviadas ao Claude
+- Ficha do lead: 40 mensagens anteriores resumidas
+- trimResponse: máx 6 frases / 800 chars
+
+## Agendamento (Google Calendar)
+- Detecção: só cria evento quando Laura diz "Agendado!" + data/hora
+- Slot extraído da RESPOSTA da Laura (não do texto do lead)
+- Anti-duplo: verifica metricas no banco (48h)
+- Bloqueios: prefeitura/governo verificados no servidor antes de criar
+- Referência: "já está agendada" não dispara novo evento
+- Remarcação: detecta pedidos de mudança, cancela antigo + cria novo
+- Reserva: 20 minutos por slot
+- Escassez: comunica "últimos horários" quando ≤3 slots
+- Janela: busca 10 dias úteis
+
+## Bloqueios automáticos
+- Prefeitura/governo municipal → não agenda
+- Servidor público → pede confirmação
+- Vínculo < 3 meses → não agenda
+- Prescrição > 2 anos → não agenda
+- Lead sem interesse → encerra
+- **Trabalhador rural = CLT = ATENDE** (não confundir com governo)
+
+## Follow-ups (automáticos, 8h-20h Belém)
+- 2h: texto
+- 4h: texto
+- 24h: texto
+- 72h: texto + marca lead como perdido
+- Validação: descarta mensagens inválidas antes de enviar
+- Contexto: referencia o caso específico do lead
+
+## Áudio
+- ElevenLabs: desativa automaticamente quando sem crédito
+- Fallback: OpenAI TTS (formato Opus/OGG nativo WhatsApp)
+- Geração: só quando lead envia áudio (não em follow-ups/confirmações)
+- CRM: /api/enviar-audio salva media_url para player funcionar
+
+## Mensagens outbound
+- Quando atendente envia primeiro (isFromMe), cria conversa + lead
+- Mensagem salva no histórico como manual
+
+## Identificação de clientes existentes
+- Busca por nome na tabela npl_clientes_processos
+- Usa parte_contrária (empresa) para desambiguar homônimos
+- 2 tentativas de confirmação, depois segue como lead novo
+
 ## Configuração
 Variáveis de ambiente no Render:
 - `API_KEY` — autenticação dos endpoints POST
