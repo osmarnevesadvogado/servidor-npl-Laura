@@ -511,6 +511,11 @@ LEMBRE: Siga o PROXIMO PASSO indicado na ficha. Nao pergunte o que ja esta preen
     return response.content[0].text;
   } catch (e) {
     console.error('[CLAUDE-NPL] Erro:', e.message);
+    // Se sem crédito, não enviar mensagem de erro ao lead
+    if (e.message?.includes('credit balance') || e.message?.includes('too low') || e.status === 400) {
+      console.error('[CLAUDE-NPL] SEM CREDITO NA API — resposta suspensa');
+      return null;
+    }
     return 'Desculpe, estou com uma dificuldade tecnica. Entre em contato pelo telefone do escritorio.';
   }
 }

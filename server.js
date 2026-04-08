@@ -307,6 +307,13 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
     // Gerar e enviar resposta
     const history = await db.getHistory(conversa.id);
     const rawReply = await ia.generateResponse(history, combinedText, conversa.id, lead, contexto, phone);
+
+    // Se API sem crédito, não enviar nada (silenciar)
+    if (!rawReply) {
+      console.log(`[PROCESS-NPL] Resposta nula para ${phone} — API possivelmente sem credito`);
+      return;
+    }
+
     const reply = ia.trimResponse(rawReply);
     await db.saveMessage(conversa.id, 'assistant', reply);
 
@@ -517,6 +524,11 @@ async function checkFollowUps() {
           const smart = await ia.generateFollowUp(history, conv.leads, followUpNum);
           if (smart && smart.length > 10) return smart;
         } catch (e) {
+          // Se sem crédito, não enviar nem a mensagem fixa
+          if (e.message?.includes('credit balance') || e.message?.includes('too low')) {
+            console.log(`[FOLLOWUP-NPL] API sem credito — follow-up cancelado`);
+            return null;
+          }
           console.log(`[FOLLOWUP-NPL] IA falhou, usando fixo: ${e.message}`);
         }
         return fixedMsg;
