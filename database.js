@@ -47,7 +47,7 @@ async function saveMessage(conversaId, role, content, extra = {}) {
     .insert({ conversa_id: conversaId, role, content, ...extra });
 }
 
-async function getHistory(conversaId, limit = 100) {
+async function getHistory(conversaId, limit = 500) {
   const { data: msgs } = await supabase
     .from('mensagens')
     .select('role, content')

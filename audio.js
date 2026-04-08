@@ -71,7 +71,7 @@ async function gerarAudioElevenLabs(texto) {
   if (!apiKey || !voiceId) return null;
 
   try {
-    const textoLimitado = texto.slice(0, 800);
+    const textoLimitado = texto.slice(0, 2000);
 
     console.log('[AUDIO-NPL] ElevenLabs gerando voz para:', textoLimitado.slice(0, 60));
 
@@ -121,7 +121,7 @@ async function gerarAudioOpenAI(texto) {
   if (!client) return null;
 
   try {
-    const textoLimitado = texto.slice(0, 500);
+    const textoLimitado = texto.slice(0, 2000);
 
     console.log('[AUDIO-NPL] OpenAI TTS (fallback) para:', textoLimitado.slice(0, 60));
 

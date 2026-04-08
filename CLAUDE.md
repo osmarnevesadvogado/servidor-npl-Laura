@@ -4,7 +4,7 @@
 Servidor Node.js/Express que opera a Laura, assistente virtual do escritório NPLADVS (direito trabalhista, Belém/PA). Atende leads via WhatsApp (Z-API), faz triagem, agenda consultas (Google Calendar) e gerencia o funil de vendas.
 
 ## Integração com CRM
-O CRM (repositório separado) consome os endpoints e o banco Supabase deste servidor.
+O CRM frontend (hospedado no GitHub Pages, repositório separado) chama diretamente os endpoints deste servidor. **Este é o único backend** — não existe outro servidor para o CRM. Todas as chamadas do CRM vão para `https://servidor-npl.onrender.com`.
 
 ### Endpoints da API (todos POST requerem header `x-api-key`)
 
@@ -26,6 +26,7 @@ O CRM (repositório separado) consome os endpoints e o banco Supabase deste serv
 | POST | `/api/documentos/organizar` | Organizar docs `{phone, nome, tese}` |
 | POST | `/api/documentos/cobrar` | Cobrar docs `{phone, nome, auditoria}` |
 | POST | `/api/relatorio-semanal` | Disparar relatório |
+| GET | `/api/pausar/status?phone=X` | Verificar se IA está pausada para um telefone |
 
 ### Resposta do /api/analytics
 ```json
