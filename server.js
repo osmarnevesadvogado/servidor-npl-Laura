@@ -123,7 +123,8 @@ async function verificarJaAgendou(phone) {
   try {
     const { cleanPhone } = require('./whatsapp');
     const tel = cleanPhone(phone);
-    // Buscar no banco se já tem consulta agendada nas últimas 48h para este telefone
+
+    // 1. Verificar no banco (métricas)
     const limite = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     const { data } = await db.supabase
       .from('metricas')
@@ -134,19 +135,31 @@ async function verificarJaAgendou(phone) {
       .order('criado_em', { ascending: false })
       .limit(20);
 
-    if (!data || data.length === 0) return null;
-
-    for (const m of data) {
-      if (!m.conversa_id) continue;
-      const { data: conv } = await db.supabase
-        .from('conversas')
-        .select('telefone')
-        .eq('id', m.conversa_id)
-        .single();
-      if (conv && conv.telefone === tel) {
-        return { data: m.detalhes, timestamp: m.criado_em };
+    if (data && data.length > 0) {
+      for (const m of data) {
+        if (!m.conversa_id) continue;
+        const { data: conv } = await db.supabase
+          .from('conversas')
+          .select('telefone')
+          .eq('id', m.conversa_id)
+          .maybeSingle();
+        if (conv && conv.telefone === tel) {
+          return { data: m.detalhes, timestamp: m.criado_em };
+        }
       }
     }
+
+    // 2. Verificar direto no Google Calendar (fallback se métrica falhou)
+    if (calendar && calendar.buscarConsultaPorTelefone) {
+      try {
+        const eventoExistente = await calendar.buscarConsultaPorTelefone(tel);
+        if (eventoExistente) {
+          console.log(`[AGENDAMENTO-NPL] Consulta encontrada no Calendar: ${eventoExistente.summary}`);
+          return { data: eventoExistente.summary, timestamp: eventoExistente.inicio };
+        }
+      } catch (e) {}
+    }
+
     return null;
   } catch (e) {
     console.log('[AGENDAMENTO-NPL] Erro ao verificar duplicata:', e.message);
@@ -324,25 +337,25 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
     const allTextBloqueio = (history || []).map(m => m.content).join(' ').toLowerCase() + ' ' + combinedText.toLowerCase();
     const temBloqueio = /(prefeitura|governo municipal|orgao municipal|órgão municipal|servidor municipal|câmara municipal|camara municipal)/i.test(allTextBloqueio);
 
-    // Detectar confirmação NOVA (não referência a consulta existente)
-    const temConfirmacao = replyLower.includes('agendado!') ||
-      (replyLower.includes('agendado') && !replyLower.includes('já está agendad') && !replyLower.includes('ja esta agendad')) ||
-      (replyLower.includes('agendada') && !replyLower.includes('já está agendad') && !replyLower.includes('ja esta agendad'));
-    const temDataHora = /(\d{1,2})\s*(?:h|hrs?|horas?)/.test(replyLower) ||
-      /[àa]s\s+\d{1,2}/.test(replyLower) ||
-      /\d{1,2}\/\d{1,2}/.test(replyLower) ||
-      /(segunda|terça|terca|quarta|quinta|sexta|amanhã|amanha|hoje)/.test(replyLower);
+    // Detectar confirmação NOVA — exige "Agendado!" (com exclamação, não interrogação)
+    const temConfirmacao = /agendado\s*!/i.test(reply) ||
+      (/agendad[oa]/i.test(reply) && !/já está agendad|ja esta agendad|agendado\s*\?/i.test(replyLower));
+    // Exige DIA e HORA na resposta (não apenas um dos dois)
+    const temDia = /(segunda|terça|terca|quarta|quinta|sexta|amanhã|amanha|hoje|\d{1,2}\/\d{1,2}|dia\s+\d{1,2})/i.test(replyLower);
+    const temHora = /(\d{1,2})\s*(?:h|hrs?|horas?)/i.test(replyLower) || /[àa]s\s+\d{1,2}/i.test(replyLower);
     // Palavras que indicam referência (não confirmação nova)
-    const eReferencia = replyLower.includes('já está') || replyLower.includes('ja esta') ||
-      replyLower.includes('desculpa') || replyLower.includes('confusão') || replyLower.includes('confusao');
-    const agendouConsulta = temConfirmacao && temDataHora && !eReferencia && !temBloqueio;
+    const eReferencia = /(já está|ja esta|desculpa|confusão|confusao|verificar|vou buscar|tem certeza|quer mudar|quer mesmo|precisa mudar)/i.test(replyLower);
+    const agendouConsulta = temConfirmacao && temDia && temHora && !eReferencia && !temBloqueio;
     if (calendar && agendouConsulta) {
-      // Verificar se é remarcação (lead pediu para mudar/trocar/remarcar)
-      const allTextLower = (history || []).slice(-4).map(m => m.content).join(' ').toLowerCase() + ' ' + combinedText.toLowerCase();
-      const eRemarcacao = /(remarc|mudar|trocar|cancelar|adiar|nao vou poder|não vou poder|outro dia|outro horario|outro horário|posso mudar|posso trocar)/.test(allTextLower);
-
-      // Verificar se já agendou (evitar double booking, exceto remarcação)
+      // Verificar se já agendou
       const agendamentoExistente = await verificarJaAgendou(phone);
+
+      // Detectar remarcação: palavras explícitas OU (tem agendamento + lead mencionou outra data)
+      const allTextLower = (history || []).slice(-6).map(m => m.content).join(' ').toLowerCase() + ' ' + combinedText.toLowerCase();
+      const remarcacaoExplicita = /(remarc|mudar|trocar|cancelar|adiar|nao vou poder|não vou poder|outro dia|outro horario|outro horário|posso mudar|posso trocar|pode ser outro|tem outro)/.test(allTextLower);
+      const leadMudouData = agendamentoExistente && /(pode ser|prefiro|quero|melhor|bora|vamos|segunda|terça|terca|quarta|quinta|sexta|amanhã|amanha)/.test(combinedText.toLowerCase());
+      const eRemarcacao = remarcacaoExplicita || leadMudouData;
+
       if (agendamentoExistente && !eRemarcacao) {
         console.log(`[CALENDAR-NPL] BLOQUEADO: ${phone} ja agendou recentemente (${agendamentoExistente.data})`);
       } else {

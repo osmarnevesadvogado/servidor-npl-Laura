@@ -605,14 +605,30 @@ async function encontrarSlot(texto, phoneAtual = null) {
     });
   }
 
-  // Só retorna se encontrou correspondência real (dia OU hora)
-  // Se não encontrou nenhum filtro, retorna null (não chutar slot aleatório)
-  if (diaAlvo === null && dataExplicita === null && horaAlvo === null) {
-    console.log('[CALENDAR-NPL] encontrarSlot: nenhum dia/hora identificado no texto');
+  // Só retorna se encontrou correspondência real (dia E hora)
+  if (diaAlvo === null && dataExplicita === null) {
+    console.log('[CALENDAR-NPL] encontrarSlot: nenhum dia identificado no texto');
+    return null;
+  }
+  if (horaAlvo === null) {
+    console.log('[CALENDAR-NPL] encontrarSlot: nenhuma hora identificada no texto');
     return null;
   }
 
-  return candidatos.length > 0 ? candidatos[0] : null;
+  if (candidatos.length === 0) {
+    console.log('[CALENDAR-NPL] encontrarSlot: nenhum slot disponivel para o dia/hora pedido');
+    return null;
+  }
+
+  // Validar que o slot retornado realmente bate com a hora pedida (tolerância de 1h)
+  const melhor = candidatos[0];
+  const horaMelhor = new Date(melhor.inicio.getTime() + (UTC_OFFSET * 60 * 60 * 1000)).getUTCHours();
+  if (Math.abs(horaMelhor - horaAlvo) > 1) {
+    console.log(`[CALENDAR-NPL] encontrarSlot: slot ${horaMelhor}h nao bate com pedido ${horaAlvo}h`);
+    return null;
+  }
+
+  return melhor;
 }
 
 // ===== BUSCAR CONSULTAS DO DIA (para lembretes) =====
@@ -673,6 +689,37 @@ async function getConsultasDoDia() {
   }
 }
 
+// ===== BUSCAR CONSULTA EXISTENTE POR TELEFONE (sem deletar) =====
+async function buscarConsultaPorTelefone(telefone) {
+  const calendar = getCalendarClient();
+  if (!calendar) return null;
+
+  try {
+    const agora = new Date();
+    const response = await calendar.events.list({
+      calendarId: CALENDAR_ID,
+      timeMin: agora.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime',
+      timeZone: TIMEZONE,
+      maxResults: 20
+    });
+
+    const eventos = response.data.items || [];
+    const telLimpo = telefone.replace(/\D/g, '');
+
+    for (const ev of eventos) {
+      const desc = ev.description || '';
+      if (desc.includes(telLimpo) && ev.summary?.includes('Consulta Trabalhista')) {
+        return { id: ev.id, summary: ev.summary, inicio: ev.start?.dateTime };
+      }
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
 // ===== CANCELAR CONSULTA POR TELEFONE =====
 async function cancelarConsulta(telefone) {
   const calendar = getCalendarClient();
@@ -693,6 +740,8 @@ async function cancelarConsulta(telefone) {
     const eventos = response.data.items || [];
     const telLimpo = telefone.replace(/\D/g, '');
 
+    // Deletar TODOS os eventos futuros deste telefone (não só o primeiro)
+    const cancelados = [];
     for (const ev of eventos) {
       const desc = ev.description || '';
       if (desc.includes(telLimpo) && ev.summary?.includes('Consulta Trabalhista')) {
@@ -701,12 +750,18 @@ async function cancelarConsulta(telefone) {
           eventId: ev.id
         });
         console.log(`[CALENDAR-NPL] Consulta cancelada: ${ev.summary} (${ev.start?.dateTime})`);
-        return { id: ev.id, summary: ev.summary, inicio: ev.start?.dateTime };
+        cancelados.push({ id: ev.id, summary: ev.summary, inicio: ev.start?.dateTime });
       }
     }
 
-    console.log(`[CALENDAR-NPL] Nenhuma consulta encontrada para ${telefone}`);
-    return null;
+    if (cancelados.length === 0) {
+      console.log(`[CALENDAR-NPL] Nenhuma consulta encontrada para ${telefone}`);
+      return null;
+    }
+    if (cancelados.length > 1) {
+      console.log(`[CALENDAR-NPL] ${cancelados.length} consultas canceladas para ${telefone} (limpeza de duplicatas)`);
+    }
+    return cancelados[0];
   } catch (e) {
     console.error('[CALENDAR-NPL] Erro ao cancelar consulta:', e.message);
     return null;
@@ -717,6 +772,7 @@ module.exports = {
   getHorariosDisponiveis,
   sugerirHorarios,
   criarConsulta,
+  buscarConsultaPorTelefone,
   cancelarConsulta,
   encontrarSlot,
   getConsultasDoDia,
