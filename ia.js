@@ -283,21 +283,17 @@ function buildFichaLead(lead, history, contexto) {
     }
   }
 
-  // Verificar se e um retorno
+  // Resumo da conversa anterior (lead + Laura) para contexto completo
   if (history && history.length >= 2) {
-    const userMsgs = history.filter(m => m.role === 'user');
-    if (userMsgs.length >= 2) {
-      const temas = [];
-      for (const m of history.slice(0, -1)) {
-        if (m.role === 'user' && m.content.length > 5) {
-          temas.push(m.content.slice(0, 200));
-        }
-      }
-      if (temas.length > 0) {
-        linhas.push(`\nHISTORICO ANTERIOR (lead ja conversou antes):`);
-        linhas.push(`- Mensagens anteriores do lead: "${temas.slice(-40).join('" / "')}"`);
-        linhas.push(`- IMPORTANTE: Voce tem TODA a conversa anterior. Demonstre que lembra. Retome de onde parou. NUNCA repita perguntas ja feitas ou respondidas.`);
-      }
+    const resumo = [];
+    for (const m of history.slice(-40)) {
+      const autor = m.role === 'user' ? 'Lead' : 'Laura';
+      resumo.push(`${autor}: ${m.content.slice(0, 200)}`);
+    }
+    if (resumo.length > 0) {
+      linhas.push(`\nRESUMO DA CONVERSA (ultimas ${resumo.length} mensagens):`);
+      linhas.push(resumo.join('\n'));
+      linhas.push(`\nIMPORTANTE: Voce tem o resumo completo acima. NUNCA repita perguntas que voce (Laura) ja fez. NUNCA peca informacoes que o lead ja deu. Retome de onde parou.`);
     }
   }
 
