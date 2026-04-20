@@ -217,9 +217,17 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
     const lead = await db.getOrCreateLead(phone, finalName);
     const conversa = await db.getOrCreateConversa(phone);
 
-    // Vincular lead a conversa
-    if (lead && conversa && !conversa.lead_id) {
-      await db.updateConversa(conversa.id, { lead_id: lead.id, titulo: finalName || conversa.titulo });
+    // Vincular lead a conversa e atualizar título se necessário
+    if (lead && conversa) {
+      const tituloIdeal = (finalName && finalName.trim()) || lead.nome || conversa.titulo;
+      const precisaAtualizar = !conversa.lead_id ||
+        !conversa.titulo ||
+        conversa.titulo === 'WhatsApp' ||
+        conversa.titulo.startsWith('WhatsApp ') ||
+        /^\+?\(?\d{1,3}\)?/.test(conversa.titulo);
+      if (precisaAtualizar) {
+        await db.updateConversa(conversa.id, { lead_id: lead.id, titulo: tituloIdeal });
+      }
     }
 
     // Salvar mensagem
@@ -945,7 +953,7 @@ app.post('/webhook/zapi', async (req, res) => {
     let text = body.text?.message || body.body || '';
     // Limitar tamanho da mensagem para evitar abuso
     if (text.length > 5000) text = text.slice(0, 5000);
-    const senderName = body.senderName || body.notifyName || '';
+    const senderName = body.senderName || body.pushName || body.notifyName || body.chatName || '';
     const audioUrl = body.audio?.audioUrl || body.audioMessage?.url || body.audio?.url || body.audio?.mediaUrl || body.audioMessage?.audioUrl || body.audioMessage?.mediaUrl || null;
     const isAudio = body.isAudio === true || !!body.audioMessage || (!!audioUrl && audioUrl.length > 10);
 

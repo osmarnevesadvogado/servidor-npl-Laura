@@ -8,6 +8,16 @@ const supabase = createClient(config.SUPABASE_URL, config.SUPABASE_KEY);
 const ESC = config.ESCRITORIO; // 'npl'
 const INST = config.ZAPI_INSTANCE; // ID da instância Z-API (separa dados Laura/Ana)
 
+// Fallback: formata telefone BR como (DDD) XXXXX-XXXX
+function formatarTelefoneBR(tel) {
+  if (!tel) return 'Contato';
+  const limpo = tel.replace(/\D/g, '');
+  const sem55 = limpo.startsWith('55') ? limpo.slice(2) : limpo;
+  if (sem55.length === 11) return `(${sem55.slice(0,2)}) ${sem55.slice(2,7)}-${sem55.slice(7)}`;
+  if (sem55.length === 10) return `(${sem55.slice(0,2)}) ${sem55.slice(2,6)}-${sem55.slice(6)}`;
+  return `+${limpo}`;
+}
+
 // ===== CONVERSAS =====
 
 async function getOrCreateConversa(phone) {
@@ -84,7 +94,20 @@ async function getOrCreateLead(phone, nome) {
     .limit(1)
     .maybeSingle();
 
-  if (lead) return lead;
+  if (lead) {
+    // Se lead existe mas nome é fallback (WhatsApp XXXX ou telefone), atualizar com nome real recebido agora
+    if (nome && nome.trim()) {
+      const nomeAtual = lead.nome || '';
+      const nomeEhFallback = nomeAtual.startsWith('WhatsApp ') || /^\+?\(?\d{1,3}\)?/.test(nomeAtual) || !nomeAtual;
+      if (nomeEhFallback && nome.trim() !== nomeAtual) {
+        try {
+          await supabase.from('leads').update({ nome: nome.trim() }).eq('id', lead.id);
+          lead.nome = nome.trim();
+        } catch (e) {}
+      }
+    }
+    return lead;
+  }
 
   // Atribuir variante A/B ao criar lead
   const tempId = Date.now().toString();
@@ -93,7 +116,7 @@ async function getOrCreateLead(phone, nome) {
   const { data: newLead } = await supabase
     .from('leads')
     .insert({
-      nome: nome || 'WhatsApp ' + tel.slice(-4),
+      nome: nome && nome.trim() ? nome.trim() : formatarTelefoneBR(tel),
       telefone: tel,
       origem: 'WhatsApp NPL',
       etapa_funil: 'novo',
