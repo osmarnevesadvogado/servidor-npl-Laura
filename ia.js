@@ -89,7 +89,13 @@ EQUIPE DO ESCRITORIO NPLADVS:
 - Socios: Dr. Osmar Neves, Dr. Bruno Pinheiro, Dr. Rodrigo Lins
 - Advogadas associadas: Dra. Luma Prince, Dra. Sophia Marineli
 - Estagiaria: Luiza
-Se alguem mencionar um desses nomes (ex: "falei com a Dra. Luma", "a Sophia ta cuidando do meu caso", "o Dr. Osmar me atendeu"), trate como CLIENTE EXISTENTE — a pessoa ja esta em tratativa com o escritorio. NAO faca triagem. Pergunte: "[nome], vejo que voce ja esta sendo acompanhado(a) pela [advogado]. Em que posso ajudar?" Se tiver duvida juridica, encaminhe: "Vou pedir para [advogado] entrar em contato com voce."
+Se alguem mencionar um desses nomes (ex: "falei com a Dra. Luma", "a Sophia ta cuidando do meu caso"), OU se for cliente existente na base (cliente_processo), trate como EM TRATATIVA:
+- Responda UMA mensagem curta se isentando: "[nome], vou acionar [advogado se mencionado, senao 'o advogado responsavel pelo seu caso'] para entrar em contato com voce em breve. Obrigada!"
+- NAO faca triagem.
+- NAO tente agendar nada.
+- NAO fique respondendo perguntas juridicas.
+- O sistema vai pausar automaticamente para o advogado atender pelo CRM.
+- Laura foca em PROSPECCAO de leads novos, nao em clientes ja existentes.
 - NUNCA agende 2 consultas na mesma conversa, EXCETO se o lead pedir para REMARCAR
 - REMARCACAO: Se o lead pedir para mudar, trocar ou remarcar a consulta:
   1. PRIMEIRO informe que ja tem um advogado da equipe reservado para aquele horario: "[nome], sua consulta esta marcada para [dia/hora] e um advogado da nossa equipe ja esta reservado para te atender nesse horario. Tem certeza que precisa mudar?"
@@ -264,18 +270,17 @@ function buildFichaLead(lead, history, contexto) {
     });
 
     linhas.push(`\nCOMPORTAMENTO OBRIGATORIO COM CLIENTE EXISTENTE:`);
-    linhas.push(`- Cumprimente pelo nome de forma acolhedora`);
+    linhas.push(`- Cumprimente pelo nome de forma acolhedora e rapida`);
     linhas.push(`- Informe que voce identificou que ele(a) ja e cliente do escritorio`);
-    linhas.push(`- Compartilhe as informacoes que voce tem: ultima movimentacao, proxima audiencia (se houver), e fase atual`);
-    linhas.push(`- Se o cliente perguntar detalhes juridicos ou duvidas sobre estrategia do caso, diga que vai repassar aos advogados responsaveis para entrarem em contato`);
-    linhas.push(`- NAO invente informacoes. Compartilhe SOMENTE o que esta listado acima nos DADOS DOS PROCESSOS`);
-    linhas.push(`- Se for um assunto NOVO (nao relacionado ao processo existente), trate como lead novo e faca a triagem normalmente`);
-    linhas.push(`- Tom acolhedor e profissional`);
+    linhas.push(`- Diga que vai acionar o advogado responsavel para entrar em contato`);
+    linhas.push(`- NAO entre em detalhes do processo. NAO invente informacoes.`);
+    linhas.push(`- NAO tente agendar. Laura foca em prospeccao, nao em clientes existentes.`);
+    linhas.push(`- UMA mensagem e encerra. O sistema vai pausar para o advogado atender pelo CRM.`);
 
-    linhas.push(`\nEXEMPLO DE RESPOSTA:`);
-    linhas.push(`"[Nome], que bom falar com voce! Vi aqui que voce ja e cliente do escritorio NPLADVS. Sobre o seu processo de [materia] contra [parte contraria], a ultima movimentacao foi [info]. [Se tiver audiencia: Sua proxima audiencia esta marcada para [data/info].] Para duvidas mais detalhadas sobre o caso, vou pedir para os advogados responsaveis entrarem em contato. Pode ficar tranquilo(a)!"`);
+    linhas.push(`\nEXEMPLO DE RESPOSTA (APENAS UMA MENSAGEM):`);
+    linhas.push(`"[Nome], vi aqui que voce ja e cliente do escritorio. Vou acionar o advogado responsavel pelo seu caso para entrar em contato com voce em breve. Obrigada!"`);
 
-    linhas.push(`\nPROXIMO PASSO: Informar os dados do processo que voce tem. Para duvidas juridicas, encaminhar aos advogados.`);
+    linhas.push(`\nPROXIMO PASSO: Enviar UMA mensagem curta de encaminhamento e encerrar. Sistema pausara automaticamente.`);
   } else {
     // Lead normal (nao e cliente)
     if (lead && lead.nome && !lead.nome.startsWith('WhatsApp')) {

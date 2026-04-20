@@ -497,6 +497,57 @@ Regras:
   }
 }
 
+// ===== EXTRAIR CONTEÚDO DE MÍDIA (usado no fluxo principal da Laura) =====
+// Usa Haiku 4.5 (mais barato) para extrair informação de imagens/PDFs
+async function extrairConteudoMidia(mediaUrl, mediaType, caption = '') {
+  try {
+    const buffer = await downloadMidia(mediaUrl);
+    if (!buffer) return null;
+
+    const isImage = (mediaType || '').startsWith('image/') || mediaType === 'image';
+    const isPdf = (mediaType || '').includes('pdf') || mediaType === 'document' || mediaType === 'application/pdf';
+
+    if (!isImage && !isPdf) return null;
+
+    const base64 = buffer.toString('base64');
+    const prompt = `Extraia todas as informacoes relevantes deste documento/imagem que um advogado trabalhista precisaria saber. Seja objetivo, use topicos curtos. Se for documento trabalhista (CTPS, contracheque, contrato), extraia: nome, CPF, empresa, cargo, datas, valores. Se for foto (cracha, print, etc), descreva o que ve. Se nao for relevante, responda "Sem informacao relevante para o caso trabalhista".
+
+${caption ? `Caption do lead: ${caption}` : ''}
+
+Responda em portugues, maximo 10 linhas.`;
+
+    let content;
+    if (isImage) {
+      const mediaTypeClaude = (mediaType || '').includes('png') ? 'image/png'
+        : (mediaType || '').includes('webp') ? 'image/webp'
+        : 'image/jpeg';
+      content = [
+        { type: 'image', source: { type: 'base64', media_type: mediaTypeClaude, data: base64 } },
+        { type: 'text', text: prompt }
+      ];
+    } else {
+      // PDF
+      content = [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+        { type: 'text', text: prompt }
+      ];
+    }
+
+    const response = await claude.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 500,
+      messages: [{ role: 'user', content }]
+    });
+
+    const texto = response.content[0].text.trim();
+    console.log(`[MEDIA-EXTRACT] Extraido (${mediaType}): ${texto.slice(0, 80)}...`);
+    return texto;
+  } catch (e) {
+    console.error('[MEDIA-EXTRACT] Erro:', e.message);
+    return null;
+  }
+}
+
 module.exports = {
   DOCUMENTOS_OBRIGATORIOS,
   buscarMidiasWhatsApp,
@@ -504,7 +555,9 @@ module.exports = {
   organizarDocumentos,
   gerarAuditoria,
   gerarRelatorioWhatsApp,
+
   gerarCobrancaDocumentos,
   analisarDocumento,
-  identificarPorTexto
+  identificarPorTexto,
+  extrairConteudoMidia
 };
