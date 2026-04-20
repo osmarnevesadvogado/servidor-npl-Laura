@@ -20,7 +20,7 @@ module.exports = {
   SUPABASE_URL: process.env.SUPABASE_URL,
   SUPABASE_KEY: process.env.SUPABASE_KEY,
 
-  // Z-API (WhatsApp) — INSTÂNCIA SEPARADA para o número do NPL
+  // Z-API — ESCRITÓRIO (Número 01 — equipe durante o dia, Laura à noite/fds)
   ZAPI_INSTANCE: process.env.ZAPI_INSTANCE_ID,
   ZAPI_TOKEN: process.env.ZAPI_TOKEN,
   ZAPI_CLIENT_TOKEN: process.env.ZAPI_CLIENT_TOKEN,
@@ -28,6 +28,18 @@ module.exports = {
   get ZAPI_BASE() {
     return `https://api.z-api.io/instances/${this.ZAPI_INSTANCE}/token/${this.ZAPI_TOKEN}`;
   },
+
+  // Z-API — PROSPECÇÃO (Número 02 — Laura 24/7)
+  ZAPI_INSTANCE_PROSPECCAO: process.env.ZAPI_INSTANCE_ID_PROSPECCAO,
+  ZAPI_TOKEN_PROSPECCAO: process.env.ZAPI_TOKEN_PROSPECCAO,
+  ZAPI_CLIENT_TOKEN_PROSPECCAO: process.env.ZAPI_CLIENT_TOKEN_PROSPECCAO || process.env.ZAPI_CLIENT_TOKEN,
+  get ZAPI_BASE_PROSPECCAO() {
+    return `https://api.z-api.io/instances/${this.ZAPI_INSTANCE_PROSPECCAO}/token/${this.ZAPI_TOKEN_PROSPECCAO}`;
+  },
+
+  // Horário comercial do escritório (Laura silenciosa no Número 01)
+  OFFICE_HOURS_START: parseInt(process.env.OFFICE_BUSINESS_HOURS_START) || 8,
+  OFFICE_HOURS_END: parseInt(process.env.OFFICE_BUSINESS_HOURS_END) || 18,
 
   // Telefone do Dr. Osmar para notificações
   OSMAR_PHONE: process.env.OSMAR_PHONE,

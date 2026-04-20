@@ -12,6 +12,21 @@ function cleanPhone(phone) {
   return p;
 }
 
+// Retorna base URL e client token da instância correta
+function getInstanceConfig(instancia) {
+  if (instancia === 'prospeccao' && config.ZAPI_INSTANCE_PROSPECCAO) {
+    return {
+      base: config.ZAPI_BASE_PROSPECCAO,
+      clientToken: config.ZAPI_CLIENT_TOKEN_PROSPECCAO
+    };
+  }
+  // Default: escritório
+  return {
+    base: config.ZAPI_BASE,
+    clientToken: config.ZAPI_CLIENT_TOKEN
+  };
+}
+
 function markBotSent(phone) {
   recentBotSends.set(cleanPhone(phone), Date.now());
 }
@@ -19,25 +34,22 @@ function markBotSent(phone) {
 function wasBotRecentSend(phone) {
   const ts = recentBotSends.get(cleanPhone(phone));
   if (!ts) return false;
-  // Janela de 15 segundos para filtrar o echo do bot
-  // Z-API pode demorar 5-10s para ecoar dependendo da latência
-  // 15s é seguro: nenhum humano lê e responde em menos de 15s
-  // Antes era 5s (echo escapava) e 30s (bloqueava advogado)
   return (Date.now() - ts) < 15000;
 }
 
-async function sendText(phone, text) {
+async function sendText(phone, text, instancia = null) {
   try {
-    const res = await fetch(`${config.ZAPI_BASE}/send-text`, {
+    const inst = getInstanceConfig(instancia);
+    const res = await fetch(`${inst.base}/send-text`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Client-Token': config.ZAPI_CLIENT_TOKEN },
+      headers: { 'Content-Type': 'application/json', 'Client-Token': inst.clientToken },
       body: JSON.stringify({ phone: cleanPhone(phone), message: text })
     });
     const json = await res.json();
     if (json.error || json.Error) {
-      console.error('[ZAPI-NPL] Erro ao enviar msg:', phone, JSON.stringify(json));
+      console.error(`[ZAPI-NPL] Erro ao enviar msg (${instancia || 'escritorio'}):`, phone, JSON.stringify(json));
     } else {
-      console.log('[ZAPI-NPL] Mensagem enviada:', phone);
+      console.log(`[ZAPI-NPL] Mensagem enviada (${instancia || 'escritorio'}):`, phone);
     }
     markBotSent(phone);
     return json;
@@ -47,21 +59,20 @@ async function sendText(phone, text) {
   }
 }
 
-async function sendAudio(phone, audioBase64) {
+async function sendAudio(phone, audioBase64, instancia = null) {
   try {
-    // Z-API espera base64 puro sem prefixo data:...
     const base64Pure = audioBase64.includes(',') ? audioBase64.split(',')[1] : audioBase64;
-
-    const res = await fetch(`${config.ZAPI_BASE}/send-audio`, {
+    const inst = getInstanceConfig(instancia);
+    const res = await fetch(`${inst.base}/send-audio`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Client-Token': config.ZAPI_CLIENT_TOKEN },
+      headers: { 'Content-Type': 'application/json', 'Client-Token': inst.clientToken },
       body: JSON.stringify({ phone: cleanPhone(phone), audio: base64Pure })
     });
     const json = await res.json();
     if (json.error || json.Error) {
-      console.error('[ZAPI-NPL] Erro ao enviar áudio:', JSON.stringify(json));
+      console.error(`[ZAPI-NPL] Erro ao enviar áudio (${instancia || 'escritorio'}):`, JSON.stringify(json));
     } else {
-      console.log('[ZAPI-NPL] Áudio enviado:', phone, json.zapiMessageId || '');
+      console.log(`[ZAPI-NPL] Áudio enviado (${instancia || 'escritorio'}):`, phone);
     }
     markBotSent(phone);
     return json;
@@ -71,15 +82,16 @@ async function sendAudio(phone, audioBase64) {
   }
 }
 
-async function sendImage(phone, imageUrl, caption = '') {
+async function sendImage(phone, imageUrl, caption = '', instancia = null) {
   try {
-    const res = await fetch(`${config.ZAPI_BASE}/send-image`, {
+    const inst = getInstanceConfig(instancia);
+    const res = await fetch(`${inst.base}/send-image`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Client-Token': config.ZAPI_CLIENT_TOKEN },
+      headers: { 'Content-Type': 'application/json', 'Client-Token': inst.clientToken },
       body: JSON.stringify({ phone: cleanPhone(phone), image: imageUrl, caption })
     });
     const json = await res.json();
-    console.log('[ZAPI-NPL] Imagem enviada:', phone);
+    console.log(`[ZAPI-NPL] Imagem enviada (${instancia || 'escritorio'}):`, phone);
     markBotSent(phone);
     return json;
   } catch (e) {
@@ -88,16 +100,17 @@ async function sendImage(phone, imageUrl, caption = '') {
   }
 }
 
-async function sendDocument(phone, documentUrl, fileName = 'arquivo.pdf') {
+async function sendDocument(phone, documentUrl, fileName = 'arquivo.pdf', instancia = null) {
   try {
     const ext = fileName.split('.').pop() || 'pdf';
-    const res = await fetch(`${config.ZAPI_BASE}/send-document/${ext}`, {
+    const inst = getInstanceConfig(instancia);
+    const res = await fetch(`${inst.base}/send-document/${ext}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Client-Token': config.ZAPI_CLIENT_TOKEN },
+      headers: { 'Content-Type': 'application/json', 'Client-Token': inst.clientToken },
       body: JSON.stringify({ phone: cleanPhone(phone), document: documentUrl, fileName })
     });
     const json = await res.json();
-    console.log('[ZAPI-NPL] Documento enviado:', phone, fileName);
+    console.log(`[ZAPI-NPL] Documento enviado (${instancia || 'escritorio'}):`, phone, fileName);
     markBotSent(phone);
     return json;
   } catch (e) {
@@ -106,18 +119,38 @@ async function sendDocument(phone, documentUrl, fileName = 'arquivo.pdf') {
   }
 }
 
-async function notifyHotLead(leadName, phone, trigger) {
+async function notifyHotLead(leadName, phone, trigger, instancia = null) {
   const msg = `LEAD QUENTE - NPL TRABALHISTA!\n\n${leadName} (${phone}) demonstrou interesse alto.\n\nFrase: "${trigger}"\n\nResponda rapido ou a Laura continua o atendimento.`;
   try {
-    await fetch(`${config.ZAPI_BASE}/send-text`, {
+    const inst = getInstanceConfig(instancia);
+    await fetch(`${inst.base}/send-text`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Client-Token': config.ZAPI_CLIENT_TOKEN },
+      headers: { 'Content-Type': 'application/json', 'Client-Token': inst.clientToken },
       body: JSON.stringify({ phone: config.OSMAR_PHONE, message: msg })
     });
     console.log(`[HOT-NPL] Notificação enviada sobre ${leadName}`);
   } catch (e) {
     console.error('[HOT-NPL] Erro ao notificar:', e.message);
   }
+}
+
+// Detectar qual instância pelo instanceId do payload da Z-API
+function detectarInstancia(body) {
+  const instanceId = body.instanceId || body.token || '';
+  if (config.ZAPI_INSTANCE_PROSPECCAO && instanceId.includes(config.ZAPI_INSTANCE_PROSPECCAO)) {
+    return 'prospeccao';
+  }
+  return 'escritorio';
+}
+
+// Verificar se está em horário comercial (Belém, seg-sex)
+function isHorarioComercial() {
+  const agora = new Date();
+  const belemHour = parseInt(agora.toLocaleString('en-US', { timeZone: 'America/Belem', hour: 'numeric', hour12: false }));
+  const belemDay = new Date(agora.toLocaleString('en-US', { timeZone: 'America/Belem' })).getDay();
+  // 0=domingo, 6=sábado
+  const isWeekday = belemDay >= 1 && belemDay <= 5;
+  return isWeekday && belemHour >= config.OFFICE_HOURS_START && belemHour < config.OFFICE_HOURS_END;
 }
 
 function cleanup() {
@@ -136,5 +169,8 @@ module.exports = {
   sendImage,
   sendDocument,
   notifyHotLead,
+  detectarInstancia,
+  isHorarioComercial,
+  getInstanceConfig,
   cleanup
 };

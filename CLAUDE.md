@@ -156,6 +156,21 @@ Calculado a cada mensagem do lead. Critérios:
 - Usa parte_contrária (empresa) para desambiguar homônimos
 - 2 tentativas de confirmação, depois segue como lead novo
 
+## Multi-instância Z-API
+O servidor suporta 2 números WhatsApp simultâneos:
+
+**Número 01 — Escritório** (ZAPI_INSTANCE_ID, ZAPI_TOKEN, ZAPI_CLIENT_TOKEN)
+- Laura silenciosa durante horário comercial (seg-sex 8h-18h Belém)
+- Laura ativa à noite e fins de semana
+- Equipe atende durante o dia pelo CRM
+
+**Número 02 — Prospecção** (ZAPI_INSTANCE_ID_PROSPECCAO, ZAPI_TOKEN_PROSPECCAO, ZAPI_CLIENT_TOKEN_PROSPECCAO)
+- Laura ativa 24/7
+- Foco em prospecção de leads
+- Leads convertidos permanecem neste número
+
+Detecção automática: o webhook identifica a instância pelo `instanceId` do payload Z-API.
+
 ## Configuração
 Variáveis de ambiente no Render:
 - `API_KEY` — autenticação dos endpoints POST
@@ -164,3 +179,5 @@ Variáveis de ambiente no Render:
 - `ZAPI_INSTANCE_ID`, `ZAPI_TOKEN`, `ZAPI_CLIENT_TOKEN`
 - `GOOGLE_CALENDAR_ID`, `GOOGLE_CALENDAR_CREDENTIALS`
 - `OSMAR_PHONE`, `ALLOWED_ORIGINS`
+- `ZAPI_INSTANCE_ID_PROSPECCAO`, `ZAPI_TOKEN_PROSPECCAO`, `ZAPI_CLIENT_TOKEN_PROSPECCAO`
+- `OFFICE_BUSINESS_HOURS_START` (default: 8), `OFFICE_BUSINESS_HOURS_END` (default: 18)

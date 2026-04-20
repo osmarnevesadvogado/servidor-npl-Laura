@@ -183,7 +183,7 @@ function checkRateLimit(ip) {
 setInterval(() => { rateLimitMap.clear(); }, 5 * 60 * 1000);
 
 // ===== PROCESSAMENTO ASSÍNCRONO =====
-async function processBufferedMessage(phone, text, senderName, respondComAudio = false) {
+async function processBufferedMessage(phone, text, senderName, respondComAudio = false, instancia = null) {
   try {
     const result = await bufferMessage(phone, text, senderName);
     if (!result) return;
@@ -435,7 +435,7 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
                 `Escritório NPLADVS - Especializado em Direitos Trabalhistas.\n` +
                 `Qualquer dúvida, estou à disposição!`;
 
-              await whatsapp.sendText(phone, msgConfirmacao);
+              await whatsapp.sendText(phone, msgConfirmacao, instancia);
               await db.saveMessage(conversa.id, 'assistant', msgConfirmacao);
               console.log(`[CONFIRM-NPL] Confirmação enviada para ${nome}`);
             } catch (e) {
@@ -462,11 +462,11 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
     }
 
     // Enviar resposta — áudio só se o lead mandou áudio
-    await whatsapp.sendText(phone, reply);
+    await whatsapp.sendText(phone, reply, instancia);
     if (respondComAudio && audio) {
       const audioBase64 = await audio.gerarAudio(reply);
       if (audioBase64) {
-        await whatsapp.sendAudio(phone, audioBase64);
+        await whatsapp.sendAudio(phone, audioBase64, instancia);
         console.log(`[AUDIO-NPL] Resposta em audio enviada para ${phone}`);
       }
     }
@@ -873,6 +873,24 @@ app.post('/webhook/zapi', async (req, res) => {
     const isMessage = body.type === 'ReceivedCallback' || body.text?.message;
     const isFromMe = body.fromMe || body.isFromMe;
 
+    // Detectar qual instância (escritório ou prospecção)
+    const instancia = whatsapp.detectarInstancia(body);
+
+    // Número 01 (escritório): Laura silenciosa durante horário comercial
+    if (instancia === 'escritorio' && whatsapp.isHorarioComercial() && !isFromMe) {
+      // Salvar mensagem mas não responder (equipe atende)
+      const phone = body.phone || body.from?.replace('@c.us', '') || '';
+      if (phone) {
+        try {
+          const conversa = await db.getOrCreateConversa(phone);
+          const text = body.text?.message || body.body || '';
+          if (text) await db.saveMessage(conversa.id, 'user', text);
+        } catch (e) {}
+      }
+      console.log(`[ESCRITORIO-NPL] Horario comercial - msg salva sem IA: ${phone}`);
+      return res.json({ status: 'office_hours' });
+    }
+
     if (isFromMe) {
       const phone = body.phone || body.to?.replace('@c.us', '') || '';
       if (phone && whatsapp.wasBotRecentSend(phone)) {
@@ -960,7 +978,7 @@ app.post('/webhook/zapi', async (req, res) => {
       const descricaoMidia = mediaType === 'image' ? (caption || 'uma imagem')
         : mediaType === 'document' ? `um documento: ${fileName || 'arquivo'}`
         : (caption || 'um vídeo');
-      processBufferedMessage(phone, `[Lead enviou ${descricaoMidia}]`, senderName).catch(err => {
+      processBufferedMessage(phone, `[Lead enviou ${descricaoMidia}]`, senderName, false, instancia).catch(err => {
         console.error('[MEDIA-NPL] Erro ao processar:', err.message);
       });
       return;
@@ -1004,7 +1022,7 @@ app.post('/webhook/zapi', async (req, res) => {
 
           // Atualizar a mensagem do áudio com a transcrição
           // (salvar transcrição como conteúdo para o histórico da IA)
-          await processBufferedMessage(phone, transcricao, senderName, true);
+          await processBufferedMessage(phone, transcricao, senderName, true, instancia);
         } catch (e) {
           console.error('[AUDIO-NPL] Erro ao processar audio:', e.message);
         }
@@ -1030,7 +1048,7 @@ app.post('/webhook/zapi', async (req, res) => {
 
     res.json({ status: 'buffered' });
 
-    processBufferedMessage(phone, text, senderName).catch(err => {
+    processBufferedMessage(phone, text, senderName, false, instancia).catch(err => {
       console.error('[ASYNC-NPL] Erro:', err.message);
     });
 
