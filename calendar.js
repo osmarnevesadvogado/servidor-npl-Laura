@@ -434,7 +434,7 @@ async function sugerirHorarios(quantidade = 3, phoneAtual = null) {
 
 // ===== CRIAR CONSULTA (com rodízio) =====
 
-async function criarConsulta(nome, telefone, email, dataHora, formato = 'online') {
+async function criarConsulta(nome, telefone, email, dataHora, formato = 'online', instancia = 'escritorio') {
   const calendar = getCalendarClient();
   if (!calendar) return null;
 
@@ -470,6 +470,7 @@ async function criarConsulta(nome, telefone, email, dataHora, formato = 'online'
       `Telefone: ${telefone}`,
       email ? `Email: ${email}` : '',
       `Formato: ${formato}`,
+      `Origem: ${instancia}`,
       '',
       'Agendado automaticamente pela Laura (NPLADVS)'
     ].filter(Boolean).join('\n');
@@ -806,6 +807,7 @@ async function getConsultas(diasFuturos = 30) {
         const descricao = ev.description || '';
         const phoneMatch = descricao.match(/Telefone:\s*(\d+)/);
         const formatoMatch = descricao.match(/Formato:\s*(\w+)/);
+        const origemMatch = descricao.match(/Origem:\s*(\w+)/);
         const summaryMatch = (ev.summary || '').match(/Consulta.*?-\s*(.+?)\s*\(/);
         const colabMatch = (ev.summary || '').match(/\(([^)]+)\)/);
         const inicioEvento = new Date(ev.start.dateTime || ev.start.date);
@@ -816,6 +818,7 @@ async function getConsultas(diasFuturos = 30) {
           telefone: phoneMatch ? phoneMatch[1] : null,
           colaboradora: colabMatch ? colabMatch[1] : '',
           formato: formatoMatch ? formatoMatch[1] : 'online',
+          origem: origemMatch ? origemMatch[1] : 'escritorio',
           inicio: inicioEvento.toISOString(),
           inicioFormatado: formatarSlotDate(inicioEvento),
           summary: ev.summary

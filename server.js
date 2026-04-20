@@ -418,7 +418,7 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
           // Detectar formato (presencial ou online) na conversa
           const allConvText = (history || []).map(m => m.content).join(' ').toLowerCase() + ' ' + reply.toLowerCase();
           const formato = /(presencial|no escritorio|no escritório|pessoalmente)/.test(allConvText) ? 'presencial' : 'online';
-          const resultado = await calendar.criarConsulta(nome, phone, email, slot.inicio, formato);
+          const resultado = await calendar.criarConsulta(nome, phone, email, slot.inicio, formato, instancia || 'escritorio');
           if (resultado) {
             console.log(`[CALENDAR-NPL] Consulta CRIADA: ${nome} em ${resultado.inicio} com ${resultado.colaboradora}`);
             try {
