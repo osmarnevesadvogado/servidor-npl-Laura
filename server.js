@@ -508,6 +508,17 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       }
     }
 
+    // Se é cliente existente OU mencionou advogado da equipe,
+    // Laura se isenta e PAUSA automaticamente para o advogado atender pelo CRM
+    const ehClienteExistente = contexto && (contexto.tipo === 'cliente' || contexto.tipo === 'cliente_processo');
+    const mencionouEquipeMsg = /(dra\.?\s*luma|luma prince|dra\.?\s*sophia|sophia marineli|dr\.?\s*osmar|osmar neves|dr\.?\s*bruno|bruno pinheiro|dr\.?\s*rodrigo|rodrigo lins|minha advogada|meu advogado|falei com (a |o )?(dra?\.?|advogad))/i.test(
+      ((history || []).map(m => m.content).join(' ') + ' ' + combinedText).toLowerCase()
+    );
+    if (ehClienteExistente || mencionouEquipeMsg) {
+      console.log(`[CLIENTE-NPL] ${phone} em tratativa — pausando IA 24h para advogado atender pelo CRM`);
+      pauseAI(phone, 60 * 24);
+    }
+
     // Atualizar etapa do funil
     if (lead && lead.etapa_funil === 'novo') {
       await db.updateLead(lead.id, { etapa_funil: 'contato' });
@@ -1012,12 +1023,29 @@ app.post('/webhook/zapi', async (req, res) => {
 
       // Processar com a IA para Laura responder sobre a mídia
       res.json({ status: 'media_processing' });
-      const descricaoMidia = mediaType === 'image' ? (caption || 'uma imagem')
-        : mediaType === 'document' ? `um documento: ${fileName || 'arquivo'}`
-        : (caption || 'um vídeo');
-      processBufferedMessage(phone, `[Lead enviou ${descricaoMidia}]`, senderName, false, instancia).catch(err => {
-        console.error('[MEDIA-NPL] Erro ao processar:', err.message);
-      });
+
+      // Se for imagem ou PDF, extrair conteúdo com Haiku (Laura vê e entende)
+      (async () => {
+        let conteudoExtraido = null;
+        if (documentos && (mediaType === 'image' || mediaType === 'document') && mediaUrl) {
+          try {
+            conteudoExtraido = await documentos.extrairConteudoMidia(mediaUrl, mediaType, caption);
+          } catch (e) {
+            console.log('[MEDIA-EXTRACT] Falha:', e.message);
+          }
+        }
+
+        const descricaoMidia = mediaType === 'image' ? 'uma imagem'
+          : mediaType === 'document' ? `um documento (${fileName || 'arquivo'})`
+          : 'um vídeo';
+        const textoParaLaura = conteudoExtraido
+          ? `[Lead enviou ${descricaoMidia}. Conteudo extraido:\n${conteudoExtraido}]`
+          : `[Lead enviou ${descricaoMidia}]`;
+
+        processBufferedMessage(phone, textoParaLaura, senderName, false, instancia).catch(err => {
+          console.error('[MEDIA-NPL] Erro ao processar:', err.message);
+        });
+      })();
       return;
     }
 
