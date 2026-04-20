@@ -31,6 +31,7 @@ O CRM frontend (hospedado no GitHub Pages, repositório separado) chama diretame
 | GET | `/api/dias-nao-uteis` | Listar feriados/enforcados futuros |
 | POST | `/api/dias-nao-uteis` | Adicionar dia não útil `{data: 'YYYY-MM-DD', tipo: 'enforcado\|feriado\|ferias', descricao}` |
 | DELETE | `/api/dias-nao-uteis/:id` | Remover dia não útil |
+| POST | `/api/recuperar-vacuo` | Dispara Laura para leads sem resposta `{desde, instancia}` |
 | POST | `/webhook/zapi` | Webhook da Laura (processa com IA) |
 | POST | `/webhook/zapi-escritorio` | Webhook do escritório (só salva, sem IA). Conversas com `origem_numero = 'escritorio'` |
 

@@ -1218,6 +1218,77 @@ app.delete('/api/dias-nao-uteis/:id', requireApiKey, async (req, res) => {
   }
 });
 
+// ===== RECUPERAR LEADS NO VÁCUO =====
+// Dispara resposta da Laura para leads que mandaram msg e não receberam resposta
+app.post('/api/recuperar-vacuo', requireApiKey, async (req, res) => {
+  try {
+    const { desde, instancia } = req.body || {};
+    // Padrão: últimos 3 dias
+    const desdeData = desde
+      ? new Date(desde).toISOString()
+      : new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Buscar todas conversas ativas da instância (ou todas se não especificado)
+    let query = db.supabase
+      .from('conversas')
+      .select('id, telefone, lead_id, leads(id, nome, telefone)')
+      .eq('status', 'ativa')
+      .eq('escritorio', 'npl')
+      .gte('criado_em', '2020-01-01');
+
+    const { data: conversas, error: errConv } = await query;
+    if (errConv) throw errConv;
+
+    const processadas = [];
+    const erros = [];
+
+    for (const conv of (conversas || [])) {
+      try {
+        // Buscar a última mensagem da conversa
+        const { data: msgs } = await db.supabase
+          .from('mensagens')
+          .select('role, content, criado_em')
+          .eq('conversa_id', conv.id)
+          .order('criado_em', { ascending: false })
+          .limit(1);
+
+        if (!msgs || msgs.length === 0) continue;
+        const ultima = msgs[0];
+
+        // Só processar se última msg é do lead E é recente (desde a data pedida)
+        if (ultima.role !== 'user') continue;
+        if (new Date(ultima.criado_em).toISOString() < desdeData) continue;
+
+        // Pular se IA está pausada
+        if (isAIPaused(conv.telefone)) continue;
+
+        // Disparar processamento (async, sem bloquear)
+        processBufferedMessage(conv.telefone, ultima.content, conv.leads?.nome || '', false, instancia || 'escritorio').catch(e => {
+          console.log(`[RECUPERAR-VACUO] Erro ${conv.telefone}:`, e.message);
+        });
+
+        processadas.push({ telefone: conv.telefone, nome: conv.leads?.nome, ultima_msg_em: ultima.criado_em });
+
+        // Throttle: aguardar 3s entre cada para não sobrecarregar
+        await new Promise(r => setTimeout(r, 3000));
+      } catch (e) {
+        erros.push({ conversa: conv.id, erro: e.message });
+      }
+    }
+
+    res.json({
+      ok: true,
+      total_processadas: processadas.length,
+      processadas,
+      erros: erros.length,
+      desde: desdeData
+    });
+  } catch (e) {
+    console.error('[RECUPERAR-VACUO] Erro geral:', e.message);
+    res.status(500).json({ error: 'Erro ao recuperar leads no vacuo' });
+  }
+});
+
 app.get('/api/metricas', async (req, res) => {
   try {
     res.json(await db.getMetricas());
