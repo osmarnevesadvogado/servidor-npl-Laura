@@ -257,7 +257,7 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       jaNotificouHot.add(cleanP);
       console.log(`[HOT-NPL] Lead quente: ${finalName}`);
       await db.markLeadHot(lead.id);
-      await whatsapp.notifyHotLead(finalName || lead.nome, phone, combinedText.slice(0, 100));
+      // Notificação desativada — Dr. Osmar só recebe msg quando Laura agenda consulta
       await db.trackEvent(conversa.id, lead.id, 'lead_quente', combinedText.slice(0, 100));
     }
 
@@ -296,14 +296,7 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
           pendingClienteVerification.delete(cleanP);
           // Salvar como cliente confirmado (persiste pela conversa toda)
           clientesConfirmados.set(cleanP, { processos: pendingVerif.processos, timestamp: Date.now() });
-
-          // Notificar Dr. Osmar
-          const nomeCliente = pendingVerif.processos[0]?.nome_cliente || 'Cliente';
-          await whatsapp.notifyHotLead(
-            `CLIENTE EXISTENTE CONFIRMADO: ${nomeCliente}`,
-            phone,
-            `Cliente antigo confirmou identidade. Processos: ${pendingVerif.processos.map(p => p.numero_processo || p.materia).join(', ')}`
-          );
+          // Notificação desativada — Dr. Osmar só recebe msg quando Laura agenda consulta
         } else if (negou) {
           console.log(`[CLIENTE-ANTIGO-NPL] ${cleanP} NEGOU ser cliente existente`);
           pendingClienteVerification.delete(cleanP);
