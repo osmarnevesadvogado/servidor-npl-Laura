@@ -508,12 +508,12 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       }
     }
 
-    // Se é cliente existente OU mencionou advogado da equipe,
+    // Se é cliente existente OU lead mencionou advogado da equipe,
     // Laura se isenta e PAUSA automaticamente para o advogado atender pelo CRM
+    // IMPORTANTE: verificar só mensagens do LEAD (role='user'), não da Laura
     const ehClienteExistente = contexto && (contexto.tipo === 'cliente' || contexto.tipo === 'cliente_processo');
-    const mencionouEquipeMsg = /(dra\.?\s*luma|luma prince|dra\.?\s*sophia|sophia marineli|dr\.?\s*osmar|osmar neves|dr\.?\s*bruno|bruno pinheiro|dr\.?\s*rodrigo|rodrigo lins|minha advogada|meu advogado|falei com (a |o )?(dra?\.?|advogad))/i.test(
-      ((history || []).map(m => m.content).join(' ') + ' ' + combinedText).toLowerCase()
-    );
+    const msgsDoLead = ((history || []).filter(m => m.role === 'user').map(m => m.content).join(' ') + ' ' + combinedText).toLowerCase();
+    const mencionouEquipeMsg = /(dra\.?\s*luma|luma prince|dra\.?\s*sophia|sophia marineli|dr\.?\s*osmar|osmar neves|dr\.?\s*bruno|bruno pinheiro|dr\.?\s*rodrigo|rodrigo lins|minha advogada|meu advogado|falei com (a |o )?(dra?\.?|advogad)|ta nas maos da|tá nas mãos da|ja sou cliente|já sou cliente|ja fiz consulta|já fiz consulta)/i.test(msgsDoLead);
     if (ehClienteExistente || mencionouEquipeMsg) {
       console.log(`[CLIENTE-NPL] ${phone} em tratativa — pausando IA 24h para advogado atender pelo CRM`);
       pauseAI(phone, 60 * 24);
@@ -923,6 +923,17 @@ app.post('/webhook/zapi', async (req, res) => {
 
     // Detectar qual instância (escritório ou prospecção)
     const instancia = whatsapp.detectarInstancia(body);
+
+    // Ignorar grupos, listas de transmissão e números não-brasileiros
+    const rawPhone = body.phone || body.from || body.to || '';
+    if (rawPhone.includes('@lid') || rawPhone.includes('@g.us') || rawPhone.includes('@broadcast')) {
+      return res.json({ status: 'group_ignored' });
+    }
+    // Ignorar números internacionais (não começam com 55)
+    const phoneDigits = rawPhone.replace(/\D/g, '').replace(/@.*/, '');
+    if (phoneDigits.length > 0 && !phoneDigits.startsWith('55') && phoneDigits.length > 11) {
+      return res.json({ status: 'international_ignored' });
+    }
 
     // Número 01 (escritório): Laura silenciosa durante horário comercial
     if (instancia === 'escritorio' && !isFromMe && await whatsapp.isHorarioComercial()) {

@@ -16,7 +16,11 @@ function cleanPhone(phone) {
 // pegar só o nome próprio (primeiras 2-3 palavras que começam com maiúscula)
 function limparNomeContato(nome) {
   if (!nome) return '';
-  const limpo = nome.trim();
+  let limpo = nome.trim();
+  // Se é handle de rede social (@usuario) ou email, ignorar
+  if (limpo.startsWith('@') || limpo.includes('@') || /^[a-z0-9._]+$/i.test(limpo)) return '';
+  // Se é só emojis, ignorar
+  if (/^[\u{1F300}-\u{1FAF8}\u{2600}-\u{27BF}\s]+$/u.test(limpo)) return '';
   // Palavras que indicam que NÃO é apenas nome (vem com cargo/empresa)
   const palavrasNaoNome = /(time|equipe|setor|comercial|corporativo|tecnico|técnico|vendas|empresa|escritorio|escritório|do |da |de |dos |das )/i;
   if (!palavrasNaoNome.test(limpo)) return limpo;

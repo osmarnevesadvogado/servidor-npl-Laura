@@ -327,7 +327,9 @@ function buildFichaLead(lead, history, contexto) {
   const temAdvogado = /(advogado|advogada|outro advogado|ja procur)/i.test(allText) && history.length > 4;
 
   // Detectar menção a advogado da equipe (= cliente existente em tratativa)
-  const mencionouEquipe = /(dra\.?\s*luma|luma prince|dra\.?\s*sophia|sophia marineli|dr\.?\s*osmar|osmar neves|dr\.?\s*bruno|bruno pinheiro|dr\.?\s*rodrigo|rodrigo lins|luiza|a advogada|a doutora|o doutor|minha advogada|meu advogado|falei com (a |o )?(dra?\.?|advogad)|ta nas maos da|tá nas mãos da|processo com (o |a )?escritorio|processo com (o |a )?escritório|ja sou cliente|já sou cliente|ja fiz consulta|já fiz consulta)/i.test(allText);
+  // Verificar menção de equipe apenas nas mensagens do LEAD (não da Laura)
+  const allTextLeadOnly = (history || []).filter(m => m.role === 'user').map(m => m.content).join(' ').toLowerCase();
+  const mencionouEquipe = /(dra\.?\s*luma|luma prince|dra\.?\s*sophia|sophia marineli|dr\.?\s*osmar|osmar neves|dr\.?\s*bruno|bruno pinheiro|dr\.?\s*rodrigo|rodrigo lins|minha advogada|meu advogado|falei com (a |o )?(dra?\.?|advogad)|ta nas maos da|tá nas mãos da|ja sou cliente|já sou cliente|ja fiz consulta|já fiz consulta)/i.test(allTextLeadOnly);
 
   // Detectar BLOQUEIOS — casos que NÃO devem ser agendados
   // Detectar PREFEITURA/GOVERNO — cuidado com falsos positivos
