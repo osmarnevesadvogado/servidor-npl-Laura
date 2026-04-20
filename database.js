@@ -64,7 +64,7 @@ async function getRecentMessages(conversaIds, perConversation = 3) {
     .select('conversa_id, role, criado_em')
     .in('conversa_id', conversaIds)
     .order('criado_em', { ascending: false })
-    .limit(conversaIds.length * perConversation);
+    .limit(Math.max(conversaIds.length * perConversation, 500));
 
   return data || [];
 }
@@ -142,24 +142,32 @@ async function extractAndUpdateLead(leadId, text) {
     }
   }
 
-  // Tese — no NPL tudo é trabalhista, mas podemos detalhar o tipo
+  // Tese — detectar subtipo trabalhista e ADICIONAR às notas (sem sobrescrever)
   const lower = text.toLowerCase();
-  if (!updates.tese_interesse) {
-    // Já é trabalhista por padrão, mas podemos registrar subtipo nas notas
-    if (lower.includes('demiss') || lower.includes('mandaram embora') || lower.includes('demitid')) {
-      updates.notas = 'Tipo: Rescisão/Demissão';
-    } else if (lower.includes('horas extra') || lower.includes('hora extra')) {
-      updates.notas = 'Tipo: Horas extras';
-    } else if (lower.includes('acidente') || lower.includes('doença') || lower.includes('doenca')) {
-      updates.notas = 'Tipo: Acidente/Doença do trabalho';
-    } else if (lower.includes('assédio') || lower.includes('assedio')) {
-      updates.notas = 'Tipo: Assédio no trabalho';
-    } else if (lower.includes('salário') || lower.includes('salario') || lower.includes('não pagou') || lower.includes('nao pagou')) {
-      updates.notas = 'Tipo: Salário atrasado/não pago';
-    } else if (lower.includes('carteira') || lower.includes('registro')) {
-      updates.notas = 'Tipo: Falta de registro/carteira';
-    } else if (lower.includes('fgts') || lower.includes('multa')) {
-      updates.notas = 'Tipo: FGTS/Multa rescisória';
+  let tipoDetectado = null;
+  if (lower.includes('demiss') || lower.includes('mandaram embora') || lower.includes('demitid')) {
+    tipoDetectado = 'Rescisão/Demissão';
+  } else if (lower.includes('horas extra') || lower.includes('hora extra')) {
+    tipoDetectado = 'Horas extras';
+  } else if (lower.includes('acidente') || lower.includes('doença') || lower.includes('doenca')) {
+    tipoDetectado = 'Acidente/Doença do trabalho';
+  } else if (lower.includes('assédio') || lower.includes('assedio')) {
+    tipoDetectado = 'Assédio no trabalho';
+  } else if (lower.includes('salário') || lower.includes('salario') || lower.includes('não pagou') || lower.includes('nao pagou')) {
+    tipoDetectado = 'Salário atrasado/não pago';
+  } else if (lower.includes('carteira') || lower.includes('registro')) {
+    tipoDetectado = 'Falta de registro/carteira';
+  } else if (lower.includes('fgts') || lower.includes('multa')) {
+    tipoDetectado = 'FGTS/Multa rescisória';
+  } else if (lower.includes('rural') || lower.includes('fazenda') || lower.includes('sitio') || lower.includes('sítio') || lower.includes('roça')) {
+    tipoDetectado = 'Trabalhador rural';
+  }
+  if (tipoDetectado) {
+    // Buscar notas atuais para não sobrescrever
+    const { data: leadAtual } = await supabase.from('leads').select('notas').eq('id', leadId).maybeSingle();
+    const notasAtuais = leadAtual?.notas || '';
+    if (!notasAtuais.includes(tipoDetectado)) {
+      updates.notas = notasAtuais ? `${notasAtuais}, ${tipoDetectado}` : `Tipo: ${tipoDetectado}`;
     }
   }
 

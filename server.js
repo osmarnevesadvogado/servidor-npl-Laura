@@ -317,8 +317,9 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       }
     }
 
-    // Gerar e enviar resposta
-    const history = await db.getHistory(conversa.id);
+    // Gerar e enviar resposta (excluir última msg do history pois já vai na ficha)
+    const fullHistory = await db.getHistory(conversa.id);
+    const history = fullHistory.slice(0, -1);
     const rawReply = await ia.generateResponse(history, combinedText, conversa.id, lead, contexto, phone);
 
     // Se API sem crédito, não enviar nada (silenciar)
@@ -377,7 +378,10 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
         if (slot) {
           const nome = lead?.nome || 'Lead';
           const email = lead?.email || null;
-          const resultado = await calendar.criarConsulta(nome, phone, email, slot.inicio, 'online');
+          // Detectar formato (presencial ou online) na conversa
+          const allConvText = (history || []).map(m => m.content).join(' ').toLowerCase() + ' ' + reply.toLowerCase();
+          const formato = /(presencial|no escritorio|no escritório|pessoalmente)/.test(allConvText) ? 'presencial' : 'online';
+          const resultado = await calendar.criarConsulta(nome, phone, email, slot.inicio, formato);
           if (resultado) {
             console.log(`[CALENDAR-NPL] Consulta CRIADA: ${nome} em ${resultado.inicio} com ${resultado.colaboradora}`);
             try {
@@ -532,7 +536,12 @@ async function checkFollowUps() {
       const lastMsg = lastMsgs[0];
       const hoursAgo = (now - new Date(lastMsg.criado_em).getTime()) / (1000 * 60 * 60);
 
-      if (lastMsg.role !== 'assistant') continue;
+      // Se última msg é do lead (Laura não respondeu, ex: API sem crédito),
+      // tratar como se a última msg da Laura fosse há muito tempo
+      if (lastMsg.role !== 'assistant') {
+        // Só enviar follow-up se faz mais de 2h que o lead mandou sem resposta
+        if (hoursAgo < 2) continue;
+      }
 
       let followUpCount = 0;
       for (const m of lastMsgs) {
@@ -596,7 +605,7 @@ async function checkFollowUps() {
       }
 
       // 3o FOLLOW-UP: 24h
-      if (followUpCount === 3 && hoursAgo >= 20 && hoursAgo < 48) {
+      if (followUpCount === 3 && hoursAgo >= 24 && hoursAgo < 48) {
         const fixo = `${nome}, so lembrando que existe um prazo de 2 anos apos sair da empresa para buscar seus direitos trabalhistas. O escritorio NPLADVS pode avaliar o seu caso sem compromisso. Me avisa se tiver interesse.`;
         const msg = await getSmartMsg(fixo, 3);
         console.log(`[FOLLOWUP-NPL-24h] ${conv.telefone} (${nome})`);
@@ -1090,6 +1099,8 @@ app.post('/api/enviar', requireApiKey, async (req, res) => {
   try {
     const { phone, message, conversaId, usuario_nome } = req.body;
     if (!phone || !message) return res.status(400).json({ error: 'phone e message obrigatorios' });
+    // Pausar IA quando atendente envia pelo CRM (mesma lógica do WhatsApp direto)
+    pauseAI(phone, 30);
     if (conversaId) await db.saveMessage(conversaId, 'assistant', message, { manual: true, usuario_nome: usuario_nome || null });
     const result = await whatsapp.sendText(phone, message);
     res.json({ ok: true, result });
@@ -1215,27 +1226,22 @@ app.get('/api/documentos/auditoria/:phone', async (req, res) => {
     const phone = req.params.phone;
     const midias = await documentos.buscarMidiasWhatsApp(phone);
 
-    // Identificar tipos rapidamente (por caption/nome, sem IA vision para ser rápido)
-    const tipos = [];
-    for (const m of midias) {
-      const caption = m.caption || m.fileName || '';
-      if (caption) {
-        const tipo = documentos.identificarDocumento ? 'Outro' : 'Outro';
-        tipos.push(caption);
-      }
-    }
-
     res.json({
       phone,
       totalMidias: midias.length,
-      midias: midias.map(m => ({
-        fileName: m.fileName,
-        caption: m.caption,
-        mimeType: m.mimeType,
-        isImage: m.isImage,
-        isDocument: m.isDocument,
-        timestamp: m.timestamp
-      }))
+      midias: midias.map(m => {
+        const caption = m.caption || m.fileName || '';
+        const tipo = documentos.identificarPorTexto ? documentos.identificarPorTexto(caption) : 'Outro';
+        return {
+          fileName: m.fileName,
+          caption: m.caption,
+          mimeType: m.mimeType,
+          isImage: m.isImage,
+          isDocument: m.isDocument,
+          timestamp: m.timestamp,
+          tipo
+        };
+      })
     });
   } catch (e) {
     console.error('[AUDITORIA] Erro:', e.message);

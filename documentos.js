@@ -505,5 +505,6 @@ module.exports = {
   gerarAuditoria,
   gerarRelatorioWhatsApp,
   gerarCobrancaDocumentos,
-  analisarDocumento
+  analisarDocumento,
+  identificarPorTexto
 };
