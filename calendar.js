@@ -776,6 +776,57 @@ async function cancelarConsulta(telefone) {
   }
 }
 
+// ===== LISTAR CONSULTAS POR PERÍODO (para CRM) =====
+async function getConsultas(diasFuturos = 30) {
+  const calendar = getCalendarClient();
+  if (!calendar) return [];
+
+  try {
+    const belemAgora = agoraBelem();
+    const ano = belemAgora.getUTCFullYear();
+    const mes = belemAgora.getUTCMonth();
+    const dia = belemAgora.getUTCDate();
+
+    const inicio = criarDataBelem(ano, mes, dia, 0, 0);
+    const fim = new Date(inicio.getTime() + diasFuturos * 24 * 60 * 60 * 1000);
+
+    const response = await calendar.events.list({
+      calendarId: CALENDAR_ID,
+      timeMin: inicio.toISOString(),
+      timeMax: fim.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime',
+      timeZone: TIMEZONE,
+      maxResults: 200
+    });
+
+    return (response.data.items || [])
+      .filter(ev => (ev.summary || '').includes('Consulta Trabalhista'))
+      .map(ev => {
+        const descricao = ev.description || '';
+        const phoneMatch = descricao.match(/Telefone:\s*(\d+)/);
+        const formatoMatch = descricao.match(/Formato:\s*(\w+)/);
+        const summaryMatch = (ev.summary || '').match(/Consulta.*?-\s*(.+?)\s*\(/);
+        const colabMatch = (ev.summary || '').match(/\(([^)]+)\)/);
+        const inicioEvento = new Date(ev.start.dateTime || ev.start.date);
+
+        return {
+          id: ev.id,
+          nome: summaryMatch ? summaryMatch[1].trim() : ev.summary,
+          telefone: phoneMatch ? phoneMatch[1] : null,
+          colaboradora: colabMatch ? colabMatch[1] : '',
+          formato: formatoMatch ? formatoMatch[1] : 'online',
+          inicio: inicioEvento.toISOString(),
+          inicioFormatado: formatarSlotDate(inicioEvento),
+          summary: ev.summary
+        };
+      });
+  } catch (e) {
+    console.error('[CALENDAR-NPL] Erro ao listar consultas:', e.message);
+    return [];
+  }
+}
+
 module.exports = {
   getHorariosDisponiveis,
   sugerirHorarios,
@@ -784,6 +835,7 @@ module.exports = {
   cancelarConsulta,
   encontrarSlot,
   getConsultasDoDia,
+  getConsultas,
   formatarSlot: formatarSlotDate,
   reservarSlot,
   agoraBelem,

@@ -14,6 +14,7 @@ O CRM frontend (hospedado no GitHub Pages, repositório separado) chama diretame
 | GET | `/api/conversas` | Lista conversas |
 | GET | `/api/conversas/:id/mensagens` | Mensagens de uma conversa |
 | GET | `/api/metricas` | Leads por etapa, conversas ativas |
+| GET | `/api/agendamentos?dias=30` | Lista consultas do Google Calendar (nome, telefone, data, colaboradora) |
 | GET | `/api/analytics?dias=30` | Funil de conversão, A/B testing, scoring |
 | GET | `/api/relatorio-semanal` | Dados do relatório semanal |
 | GET | `/api/documentos/auditoria/:phone` | Mídias recebidas de um telefone |
