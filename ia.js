@@ -84,6 +84,12 @@ REGRAS DE OURO:
 - Se cair em BLOQUEIO, encerre educadamente. NAO tente convencer.
 - NAO FIQUE EM LOOP DE DESPEDIDAS. Se ja se despediu e o lead responde com outra despedida ("obrigado, até mais"), NAO responda de novo. Apenas se despeca UMA vez ("Até mais, bom trabalho!") e pare. O sistema pausa automaticamente.
 - Contato COMERCIAL/CORPORATIVO (Jusbrasil, vendas, etc) NAO e lead trabalhista. Responda UMA mensagem curta agradecendo e encerre. NAO faca triagem.
+
+EQUIPE DO ESCRITORIO NPLADVS:
+- Socios: Dr. Osmar Neves, Dr. Bruno Pinheiro, Dr. Rodrigo Lins
+- Advogadas associadas: Dra. Luma Prince, Dra. Sophia Marineli
+- Estagiaria: Luiza
+Se alguem mencionar um desses nomes (ex: "falei com a Dra. Luma", "a Sophia ta cuidando do meu caso", "o Dr. Osmar me atendeu"), trate como CLIENTE EXISTENTE — a pessoa ja esta em tratativa com o escritorio. NAO faca triagem. Pergunte: "[nome], vejo que voce ja esta sendo acompanhado(a) pela [advogado]. Em que posso ajudar?" Se tiver duvida juridica, encaminhe: "Vou pedir para [advogado] entrar em contato com voce."
 - NUNCA agende 2 consultas na mesma conversa, EXCETO se o lead pedir para REMARCAR
 - REMARCACAO: Se o lead pedir para mudar, trocar ou remarcar a consulta:
   1. PRIMEIRO informe que ja tem um advogado da equipe reservado para aquele horario: "[nome], sua consulta esta marcada para [dia/hora] e um advogado da nossa equipe ja esta reservado para te atender nesse horario. Tem certeza que precisa mudar?"
@@ -315,6 +321,9 @@ function buildFichaLead(lead, history, contexto) {
   const temDocumentos = /(documento|contracheque|contrato|comprovante|mensagen|prova|print|foto)/i.test(allText) && history.length > 4;
   const temAdvogado = /(advogado|advogada|outro advogado|ja procur)/i.test(allText) && history.length > 4;
 
+  // Detectar menção a advogado da equipe (= cliente existente em tratativa)
+  const mencionouEquipe = /(dra\.?\s*luma|luma prince|dra\.?\s*sophia|sophia marineli|dr\.?\s*osmar|osmar neves|dr\.?\s*bruno|bruno pinheiro|dr\.?\s*rodrigo|rodrigo lins|luiza|a advogada|a doutora|o doutor|minha advogada|meu advogado|falei com (a |o )?(dra?\.?|advogad)|ta nas maos da|tá nas mãos da|processo com (o |a )?escritorio|processo com (o |a )?escritório|ja sou cliente|já sou cliente|ja fiz consulta|já fiz consulta)/i.test(allText);
+
   // Detectar BLOQUEIOS — casos que NÃO devem ser agendados
   // Detectar PREFEITURA/GOVERNO — cuidado com falsos positivos
   // "serviços gerais", "servidor de internet" etc. NÃO são governo
@@ -343,7 +352,15 @@ function buildFichaLead(lead, history, contexto) {
   const triagemCompleta = temNome && temTempo && temCarteira && temPrazo;
   const triagemMinima = temNome && (temTempo || temPrazo); // minimo para avaliar viabilidade
 
-  if (!(contexto && (contexto.tipo === 'cliente' || contexto.tipo === 'cliente_processo' || contexto.tipo === 'cliente_processo_pendente'))) {
+  // Se mencionou advogado da equipe, marcar como cliente em tratativa
+  if (mencionouEquipe && !eContatoComercial) {
+    linhas.push(`\n⚠ CLIENTE EM TRATATIVA COM O ESCRITORIO:`);
+    linhas.push(`- Esta pessoa mencionou um advogado/advogada da equipe NPLADVS`);
+    linhas.push(`- Trate como CLIENTE EXISTENTE. NAO faca triagem.`);
+    linhas.push(`- Pergunte em que pode ajudar e encaminhe para o advogado responsavel.`);
+  }
+
+  if (!(contexto && (contexto.tipo === 'cliente' || contexto.tipo === 'cliente_processo' || contexto.tipo === 'cliente_processo_pendente')) && !mencionouEquipe) {
     linhas.push(`\nTRIAGEM:`);
     if (triagemItens.length > 0) {
       linhas.push(`- Ja coletado: ${triagemItens.join(', ')}`);
@@ -361,7 +378,9 @@ function buildFichaLead(lead, history, contexto) {
   }
 
   // Proximo passo
-  if (eContatoComercial) {
+  if (mencionouEquipe && !eContatoComercial) {
+    linhas.push(`\nPROXIMO PASSO: CLIENTE EM TRATATIVA. NAO faca triagem. Pergunte em que pode ajudar. Se tiver duvida juridica, diga que vai pedir para o advogado responsavel entrar em contato.`);
+  } else if (eContatoComercial) {
     linhas.push(`\nPROXIMO PASSO: CONTATO COMERCIAL. Responda UMA unica mensagem curta ("Obrigada pelo contato. Nossa equipe administrativa vai avaliar.") e encerre. NAO pergunte triagem. NAO insista.`);
   } else if (bloqueios.length > 0 && !semInteresse) {
     linhas.push(`\nPROXIMO PASSO: BLOQUEIO. Informe o lead educadamente conforme as regras. NAO agende.`);

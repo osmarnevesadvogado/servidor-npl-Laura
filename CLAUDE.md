@@ -129,6 +129,12 @@ Calculado a cada mensagem do lead. Critérios:
 - Escassez: comunica "últimos horários" quando ≤3 slots
 - Janela: busca 10 dias úteis
 
+## Equipe do escritório NPLADVS
+- Sócios: Dr. Osmar Neves, Dr. Bruno Pinheiro, Dr. Rodrigo Lins
+- Advogadas associadas: Dra. Luma Prince, Dra. Sophia Marineli
+- Estagiária: Luiza
+- Se alguém mencionar um desses nomes, Laura trata como cliente existente em tratativa
+
 ## Bloqueios automáticos
 - Prefeitura/governo municipal → não agenda
 - Servidor público → pede confirmação

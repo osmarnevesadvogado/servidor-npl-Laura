@@ -83,12 +83,19 @@ async function sendText(phone, text, instancia = null) {
 
 async function sendAudio(phone, audioBase64, instancia = null) {
   try {
-    const base64Pure = audioBase64.includes(',') ? audioBase64.split(',')[1] : audioBase64;
+    // Z-API exige formato data URI completo (data:audio/ogg;base64,XXXXX)
+    // Se já vem com prefixo, manter. Se é base64 puro, adicionar prefixo.
+    let audioData;
+    if (audioBase64.startsWith('data:')) {
+      audioData = audioBase64;
+    } else {
+      audioData = `data:audio/ogg;base64,${audioBase64}`;
+    }
     const inst = getInstanceConfig(instancia);
     const res = await fetch(`${inst.base}/send-audio`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Client-Token': inst.clientToken },
-      body: JSON.stringify({ phone: cleanPhone(phone), audio: base64Pure })
+      body: JSON.stringify({ phone: cleanPhone(phone), audio: audioData })
     });
     const json = await res.json();
     if (json.error || json.Error) {
