@@ -1434,6 +1434,19 @@ app.get('/api/metricas', async (req, res) => {
 });
 
 // ===== ANALYTICS DE CONVERSÃO =====
+// ===== AGENDAMENTOS (lista consultas do Google Calendar) =====
+app.get('/api/agendamentos', async (req, res) => {
+  try {
+    if (!calendar) return res.status(503).json({ error: 'Calendar não disponível' });
+    const dias = parseInt(req.query.dias) || 30;
+    const consultas = await calendar.getConsultas(dias);
+    res.json({ ok: true, total: consultas.length, agendamentos: consultas });
+  } catch (e) {
+    console.error('[AGENDAMENTOS] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar agendamentos' });
+  }
+});
+
 app.get('/api/analytics', async (req, res) => {
   try {
     const dias = parseInt(req.query.dias) || 30;

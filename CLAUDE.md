@@ -14,6 +14,7 @@ O CRM frontend (hospedado no GitHub Pages, repositório separado) chama diretame
 | GET | `/api/conversas` | Lista conversas |
 | GET | `/api/conversas/:id/mensagens` | Mensagens de uma conversa |
 | GET | `/api/metricas` | Leads por etapa, conversas ativas |
+| GET | `/api/agendamentos?dias=30` | Lista consultas do Google Calendar (nome, telefone, data, colaboradora) |
 | GET | `/api/analytics?dias=30` | Funil de conversão, A/B testing, scoring |
 | GET | `/api/relatorio-semanal` | Dados do relatório semanal |
 | GET | `/api/documentos/auditoria/:phone` | Mídias recebidas de um telefone |
@@ -134,6 +135,14 @@ Calculado a cada mensagem do lead. Critérios:
 - Advogadas associadas: Dra. Luma Prince, Dra. Sophia Marineli
 - Estagiária: Luiza
 - Se alguém mencionar um desses nomes, Laura trata como cliente existente em tratativa
+
+## Feriados reconhecidos automaticamente (2025-2027)
+Nacionais + Estadual PA + Municipais Belém:
+- Ano Novo, Carnaval, Sexta-feira Santa, Tiradentes, Dia do Trabalho
+- Corpus Christi, Adesão do Pará (15/08), Independência, Aparecida
+- Segunda pós-Círio, Finados, Proclamação, N.S. Conceição (08/12), Natal
+
+Para feriados adicionais, enforcados e férias da equipe, use a tabela `dias_nao_uteis`.
 
 ## Bloqueios automáticos
 - Prefeitura/governo municipal → não agenda
