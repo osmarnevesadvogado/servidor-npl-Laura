@@ -34,7 +34,8 @@ function markBotSent(phone) {
 function wasBotRecentSend(phone) {
   const ts = recentBotSends.get(cleanPhone(phone));
   if (!ts) return false;
-  return (Date.now() - ts) < 15000;
+  // Janela de 60s: Z-API às vezes demora 30-45s para ecoar o envio
+  return (Date.now() - ts) < 60000;
 }
 
 async function sendText(phone, text, instancia = null) {
@@ -128,6 +129,7 @@ async function notifyHotLead(leadName, phone, trigger, instancia = null) {
       headers: { 'Content-Type': 'application/json', 'Client-Token': inst.clientToken },
       body: JSON.stringify({ phone: config.OSMAR_PHONE, message: msg })
     });
+    markBotSent(config.OSMAR_PHONE); // evita que o echo pause a IA do Dr. Osmar
     console.log(`[HOT-NPL] Notificação enviada sobre ${leadName}`);
   } catch (e) {
     console.error('[HOT-NPL] Erro ao notificar:', e.message);
@@ -210,7 +212,8 @@ async function isHorarioComercial() {
 function cleanup() {
   const now = Date.now();
   for (const [phone, ts] of recentBotSends) {
-    if (now - ts > 120000) recentBotSends.delete(phone);
+    // Limpar após 3min (janela de 60s + margem)
+    if (now - ts > 180000) recentBotSends.delete(phone);
   }
 }
 

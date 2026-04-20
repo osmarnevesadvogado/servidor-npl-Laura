@@ -115,6 +115,17 @@ setInterval(() => {
 // ===== CONTROLE DE NOTIFICAÇÃO DE LEAD QUENTE =====
 const jaNotificouHot = new Set(); // phones já notificados como lead quente
 
+// ===== CLIENTES EXISTENTES CONFIRMADOS (persiste processos durante conversa) =====
+const clientesConfirmados = new Map(); // phone -> { processos, timestamp }
+
+// Limpar cache de clientes confirmados após 24h
+setInterval(() => {
+  const now = Date.now();
+  for (const [phone, entry] of clientesConfirmados) {
+    if (now - entry.timestamp > 24 * 60 * 60 * 1000) clientesConfirmados.delete(phone);
+  }
+}, 60 * 60 * 1000);
+
 // ===== CONTROLE DE AGENDAMENTO ÚNICO POR CONVERSA =====
 // Evita que a Laura agende 2 consultas pro mesmo lead
 // Persiste via métricas no banco para sobreviver a deploys
@@ -255,6 +266,11 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
 
     // Se não é cliente CRM, verificar se é cliente antigo (planilha de processos) pelo nome
     if (!contexto || contexto.tipo === 'lead') {
+      // Primeiro: verificar se já foi confirmado como cliente existente nesta conversa
+      const confirmadoRecente = clientesConfirmados.get(cleanP);
+      if (confirmadoRecente) {
+        contexto = { tipo: 'cliente_processo', processos: confirmadoRecente.processos };
+      } else {
       const pendingVerif = pendingClienteVerification.get(cleanP);
 
       if (pendingVerif) {
@@ -270,6 +286,8 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
           console.log(`[CLIENTE-ANTIGO-NPL] ${cleanP} CONFIRMOU ser cliente existente`);
           contexto = { tipo: 'cliente_processo', processos: pendingVerif.processos };
           pendingClienteVerification.delete(cleanP);
+          // Salvar como cliente confirmado (persiste pela conversa toda)
+          clientesConfirmados.set(cleanP, { processos: pendingVerif.processos, timestamp: Date.now() });
 
           // Notificar Dr. Osmar
           const nomeCliente = pendingVerif.processos[0]?.nome_cliente || 'Cliente';
@@ -315,6 +333,7 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
           }
         }
       }
+      } // fim do else de confirmadoRecente
     }
 
     // Gerar e enviar resposta (excluir última msg do history pois já vai na ficha)
