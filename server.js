@@ -8,6 +8,7 @@ const whatsapp = require('./whatsapp');
 const db = require('./database');
 const ia = require('./ia');
 const fluxo = require('./fluxo');
+const alucinacao = require('./alucinacao');
 let audio;
 try { audio = require('./audio'); } catch (e) { console.log('[INIT-NPL] Audio nao disponivel'); }
 let calendar;
@@ -40,6 +41,40 @@ function requireApiKey(req, res, next) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   next();
+}
+
+// ===== AUDITORIA DE ACESSO A DADOS SENSÍVEIS =====
+// Registra tentativas de leitura/escrita/exclusão em recursos sensíveis (leads, mensagens, documentos).
+// Retorna um middleware Express. Uso: app.get('/path', auditAccess('read', 'lead'), handler)
+function auditAccess(acao, recurso) {
+  return (req, res, next) => {
+    // Fire-and-forget: registra antes de continuar a requisição
+    (async () => {
+      try {
+        const usuario = req.headers['x-usuario-nome'] || req.body?.usuario_nome || req.query?.usuario_nome || 'desconhecido';
+        const ip = req.headers['x-forwarded-for'] || req.ip || req.connection?.remoteAddress || '';
+        const resourceId = req.params?.id || req.params?.phone || null;
+        const detalhes = JSON.stringify({
+          acao,
+          recurso,
+          endpoint: req.originalUrl || req.url,
+          metodo: req.method,
+          usuario,
+          ip: (ip || '').toString().split(',')[0].trim(),
+          resource_id: resourceId
+        });
+        await db.supabase.from('metricas').insert({
+          evento: 'auditoria_acesso',
+          detalhes,
+          escritorio: config.ESCRITORIO,
+          criado_em: new Date().toISOString()
+        });
+      } catch (e) {
+        // Não bloquear requisição por falha de auditoria
+      }
+    })();
+    next();
+  };
 }
 
 // ===== BUFFER DE MENSAGENS =====
@@ -340,6 +375,37 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
     // Gerar e enviar resposta (excluir última msg do history pois já vai na ficha)
     const fullHistory = await db.getHistory(conversa.id);
     const history = fullHistory.slice(0, -1);
+
+    // Tracking de prazo prescricional — se detecta urgência/prescrito, rastreia uma vez
+    try {
+      const prescricao = require('./prescricao');
+      const textoConversa = fullHistory.filter(m => m.role === 'user').map(m => m.content).join('\n');
+      const alerta = prescricao.formatarAlerta(textoConversa);
+      if (alerta && (alerta.nivel === 'urgente' || alerta.nivel === 'prescrito' || alerta.nivel === 'atencao')) {
+        // Dedup: só rastreia se último evento de prescrição for diferente
+        const { data: ultima } = await db.supabase
+          .from('metricas')
+          .select('detalhes')
+          .eq('conversa_id', conversa.id)
+          .eq('evento', 'prazo_prescricional')
+          .order('criado_em', { ascending: false })
+          .limit(1);
+        const nivelAnterior = ultima && ultima[0] ? (() => {
+          try { return JSON.parse(ultima[0].detalhes).nivel; } catch { return null; }
+        })() : null;
+        if (nivelAnterior !== alerta.nivel) {
+          await db.trackEvent(conversa.id, lead?.id, 'prazo_prescricional', JSON.stringify({
+            nivel: alerta.nivel,
+            mesesRestantes: alerta.mesesRestantes,
+            mesesDesdeSaida: alerta.mesesDesdeSaida
+          }));
+          console.log(`[PRESCRICAO-NPL] ${phone}: ${alerta.nivel} (${alerta.mesesRestantes ?? '-'} meses restantes)`);
+        }
+      }
+    } catch (e) {
+      console.log('[PRESCRICAO-NPL] Erro tracking:', e.message);
+    }
+
     const rawReply = await ia.generateResponse(history, combinedText, conversa.id, lead, contexto, phone);
 
     // Se API sem crédito, não enviar nada (silenciar)
@@ -349,6 +415,27 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
     }
 
     const reply = ia.trimResponse(rawReply);
+
+    // Auditoria anti-alucinação: registra flags sem bloquear envio.
+    // Alta severidade notifica Dr. Osmar para revisão.
+    try {
+      const auditoria = alucinacao.analisar(reply);
+      if (auditoria.flags.length > 0) {
+        await db.trackEvent(conversa.id, lead?.id, 'alucinacao_detectada', JSON.stringify({
+          severidade: auditoria.severidadeMax,
+          flags: auditoria.flags.map(f => ({ tipo: f.tipo, trecho: f.trecho }))
+        }));
+        if (auditoria.severidadeMax === 'alta' && config.OSMAR_PHONE) {
+          const tipos = auditoria.flags.map(f => f.tipo).join(', ');
+          const alerta = `[LAURA - ALERTA] Resposta possivelmente fora da politica para ${lead?.nome || phone}:\n\n` +
+            `Tipo: ${tipos}\n\nTrecho: "${reply.slice(0, 200)}"\n\nRever no CRM.`;
+          whatsapp.sendText(config.OSMAR_PHONE, alerta).catch(() => {});
+        }
+        console.log(`[ALUCINACAO-NPL] ${phone}: ${auditoria.flags.map(f => f.tipo).join(', ')} (${auditoria.severidadeMax})`);
+      }
+    } catch (e) {
+      console.log('[ALUCINACAO-NPL] Erro na analise:', e.message);
+    }
 
     // Detectar loop de despedida: se últimas 2 respostas da Laura já foram
     // despedidas ("até mais", "tenha um otimo"...), pausar a IA automaticamente
@@ -457,6 +544,30 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
               }
             }
 
+            // Gerar resumo executivo do caso (para o advogado que vai atender)
+            if (lead && ia.gerarResumoCaso) {
+              (async () => {
+                try {
+                  const resumo = await ia.gerarResumoCaso(history, lead);
+                  if (resumo) {
+                    const notasAtuais = lead.notas || '';
+                    const marcador = '=== RESUMO DA TRIAGEM (Laura) ===';
+                    // Se já tem resumo antigo, substitui. Se não, concatena no topo.
+                    let novasNotas;
+                    if (notasAtuais.includes(marcador)) {
+                      novasNotas = `${marcador}\n${resumo}\n\n${notasAtuais.split(marcador).slice(1).join(marcador).split('\n\n').slice(1).join('\n\n')}`;
+                    } else {
+                      novasNotas = `${marcador}\n${resumo}${notasAtuais ? '\n\n' + notasAtuais : ''}`;
+                    }
+                    await db.updateLead(lead.id, { notas: novasNotas });
+                    console.log(`[RESUMO-NPL] Resumo salvo nas notas do lead ${nome}`);
+                  }
+                } catch (e) {
+                  console.log('[RESUMO-NPL] Erro ao gerar/salvar resumo:', e.message);
+                }
+              })();
+            }
+
             // Notificar Dr. Osmar sobre o novo agendamento
             await whatsapp.notifyHotLead(
               `CONSULTA AGENDADA: ${nome}`,
@@ -519,6 +630,42 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
     if (ehClienteExistente || mencionouEquipeMsg) {
       console.log(`[CLIENTE-NPL] ${phone} em tratativa — pausando IA 24h para advogado atender pelo CRM`);
       pauseAI(phone, 60 * 24);
+    }
+
+    // Detectar objeções para métricas (análise posterior de padrões)
+    try {
+      const objecoesMod = require('./objecoes');
+      const objDetectadas = objecoesMod.detectarObjecoes(combinedText);
+      if (objDetectadas.length > 0 && lead?.id) {
+        const tipos = objDetectadas.map(o => o.tipo).join(',');
+        await db.trackEvent(conversa.id, lead.id, 'objecao', tipos);
+      }
+    } catch (e) {}
+
+    // Detectar tese e atualizar tese_interesse do lead
+    try {
+      if (lead?.id && !lead.tese_interesse) {
+        const teses = require('./teses');
+        const textoCompleto = ((history || []).filter(m => m.role === 'user').map(m => m.content).join(' ') + ' ' + combinedText);
+        const detectado = teses.detectarTese(textoCompleto);
+        if (detectado) {
+          const titulo = teses.TESES[detectado.principal]?.titulo;
+          if (titulo) {
+            await db.updateLead(lead.id, { tese_interesse: titulo });
+            console.log(`[TESE-NPL] Lead ${lead.nome}: tese detectada = ${titulo}`);
+          }
+        }
+      }
+    } catch (e) {}
+
+    // Pedido explícito de falar com humano/advogado — pausa IA para a equipe atender pelo CRM
+    const pediuHumano = /(falar com (um |uma |o |a )?(advogad|atendent|pessoa|humano|alguem|alguém|gente)|nao quero falar com (a )?ia|não quero falar com (a )?ia|quero falar com um humano|quero uma pessoa|prefiro falar com (advogad|humano|pessoa|gente)|tem (advogad|humano|pessoa))/i.test(combinedText);
+    if (pediuHumano) {
+      console.log(`[HUMANO-NPL] ${phone} pediu para falar com advogado — pausando IA 2h`);
+      pauseAI(phone, 120);
+      try {
+        await db.trackEvent(conversa.id, lead?.id, 'pediu_humano', combinedText.slice(0, 100));
+      } catch (e) {}
     }
 
     // Atualizar etapa do funil
@@ -712,35 +859,92 @@ setInterval(() => {
 setTimeout(() => checkFollowUps(), 60 * 1000);
 
 // ===== LEMBRETES DE CONSULTA =====
-// Envia lembrete no dia da consulta às 08h (áudio) e 30min antes (texto)
-const lembretesEnviados = new Set(); // evitar duplicatas: "tipo_eventId"
+// Envia mensagens em múltiplos pontos: 48h (documentos), 24h (confirmação),
+// 08h do dia (matinal), 1h (lembrete), 30min (lembrete final), +2h (no-show).
+// Map chave → timestamp de envio, para dedupe persistente entre dias.
+const lembretesEnviados = new Map();
+
+function jaEnviado(chave) {
+  return lembretesEnviados.has(chave);
+}
+function marcarEnviado(chave) {
+  lembretesEnviados.set(chave, Date.now());
+}
 
 async function checkLembretesConsulta() {
   if (!calendar) return;
   try {
-    const consultas = await calendar.getConsultasDoDia();
-    if (consultas.length === 0) return;
+    // Busca consultas dos próximos 3 dias para alcançar janelas de 48h/24h.
+    const consultasFuturas = await calendar.getConsultas(3);
+    const consultasHoje = await calendar.getConsultasDoDia();
+
+    // Merge por id preservando inicio como Date
+    const porId = new Map();
+    for (const c of consultasFuturas) {
+      porId.set(c.id, { ...c, inicio: new Date(c.inicio) });
+    }
+    for (const c of consultasHoje) porId.set(c.id, c); // hoje já tem Date
+
+    if (porId.size === 0) return;
 
     const belemAgora = calendar.agoraBelem();
     const horaAtual = belemAgora.getUTCHours();
     const minAtual = belemAgora.getUTCMinutes();
+    const agora = Date.now();
 
-    for (const consulta of consultas) {
+    for (const consulta of porId.values()) {
       if (!consulta.telefone) continue;
 
-      const chaveMatinal = `matinal_${consulta.id}`;
-      const chave30min = `30min_${consulta.id}`;
+      const inicioMs = consulta.inicio.getTime();
+      const minFaltando = (inicioMs - agora) / (1000 * 60);
+      const tituloPessoa = consulta.colaboradora === 'Luiza' ? 'a colaboradora' : 'a advogada';
 
-      // Lembrete matinal às 08h (áudio)
-      if (horaAtual === 8 && minAtual < 15 && !lembretesEnviados.has(chaveMatinal)) {
-        lembretesEnviados.add(chaveMatinal);
+      // ===== 48h antes: cobrança de documentos =====
+      const chaveDocs = `cobrancaDocs_${consulta.id}`;
+      if (minFaltando >= 46 * 60 && minFaltando <= 50 * 60 && !jaEnviado(chaveDocs)) {
+        marcarEnviado(chaveDocs);
         try {
-          const tituloLembrete = consulta.colaboradora === 'Luiza' ? 'a colaboradora' : 'a advogada';
+          const msg = `Oi, ${consulta.nome}! Aqui é a Laura do NPLADVS. ` +
+            `Sua consulta trabalhista com ${tituloPessoa} ${consulta.colaboradora} está chegando (${consulta.inicioFormatado}).\n\n` +
+            `Para a consulta render mais, se puder, separe:\n` +
+            `- CTPS (carteira de trabalho) ou e-Social\n` +
+            `- 3 últimos holerites / contracheques\n` +
+            `- Contrato de trabalho (se tiver)\n` +
+            `- Qualquer prova do caso (mensagens, fotos, e-mails)\n\n` +
+            `Pode mandar por aqui mesmo, se preferir. Qualquer dúvida me chama!`;
+          await whatsapp.sendText(consulta.telefone, msg);
+          console.log(`[LEMBRETE-NPL] Cobrança de documentos (48h) para ${consulta.nome}`);
+        } catch (e) {
+          console.log(`[LEMBRETE-NPL] Erro cobrança docs ${consulta.nome}:`, e.message);
+        }
+      }
+
+      // ===== 24h antes: confirmação =====
+      const chaveConfirm = `confirmacao24h_${consulta.id}`;
+      if (minFaltando >= 22 * 60 && minFaltando <= 26 * 60 && !jaEnviado(chaveConfirm)) {
+        marcarEnviado(chaveConfirm);
+        try {
+          const msg = `${consulta.nome}, passando para confirmar sua consulta trabalhista de amanhã ` +
+            `às ${consulta.inicioFormatado} com ${tituloPessoa} ${consulta.colaboradora}.\n\n` +
+            `Vai conseguir comparecer? Se precisar remarcar, me avisa por aqui que eu ajeito.\n\n` +
+            `Estamos te aguardando!`;
+          await whatsapp.sendText(consulta.telefone, msg);
+          console.log(`[LEMBRETE-NPL] Confirmação 24h para ${consulta.nome}`);
+        } catch (e) {
+          console.log(`[LEMBRETE-NPL] Erro confirmação 24h ${consulta.nome}:`, e.message);
+        }
+      }
+
+      // ===== Matinal 08h: áudio/texto do dia =====
+      const chaveMatinal = `matinal_${consulta.id}`;
+      const ehHoje = minFaltando > 0 && minFaltando <= 24 * 60;
+      if (ehHoje && horaAtual === 8 && minAtual < 15 && !jaEnviado(chaveMatinal)) {
+        marcarEnviado(chaveMatinal);
+        try {
           const msgTexto = `Bom dia, ${consulta.nome}! Aqui é a Laura do escritório NPLADVS. ` +
             `Passando para lembrar que hoje você tem consulta trabalhista às ${consulta.inicioFormatado} ` +
-            `com ${tituloLembrete} ${consulta.colaboradora}. A consulta será online. ` +
+            `com ${tituloPessoa} ${consulta.colaboradora}. A consulta será online. ` +
             `Nos vemos mais tarde!`;
-
           await whatsapp.sendText(consulta.telefone, msgTexto);
           console.log(`[LEMBRETE-NPL] Lembrete matinal (08h) para ${consulta.nome}`);
         } catch (e) {
@@ -748,24 +952,59 @@ async function checkLembretesConsulta() {
         }
       }
 
-      // Lembrete 30min antes (texto)
-      const inicioConsulta = consulta.inicio.getTime();
-      const agora = Date.now();
-      const minFaltando = (inicioConsulta - agora) / (1000 * 60);
-
-      if (minFaltando > 0 && minFaltando <= 35 && !lembretesEnviados.has(chave30min)) {
-        lembretesEnviados.add(chave30min);
+      // ===== 1h antes: lembrete =====
+      const chave1h = `lembrete1h_${consulta.id}`;
+      if (minFaltando > 45 && minFaltando <= 75 && !jaEnviado(chave1h)) {
+        marcarEnviado(chave1h);
         try {
-          const titulo30 = consulta.colaboradora === 'Luiza' ? 'a colaboradora' : 'a advogada';
-          const msgLembrete = `${consulta.nome}, sua consulta trabalhista com ${titulo30} ${consulta.colaboradora} ` +
+          const msg = `${consulta.nome}, faltando 1h para sua consulta trabalhista com ${tituloPessoa} ${consulta.colaboradora}.\n\n` +
+            `Separe um lugar tranquilo e, se tiver, os documentos (CTPS, holerites, contrato, prints). ` +
+            `O link da reunião chega por aqui antes do horário.`;
+          await whatsapp.sendText(consulta.telefone, msg);
+          console.log(`[LEMBRETE-NPL] Lembrete 1h enviado para ${consulta.nome}`);
+        } catch (e) {
+          console.log(`[LEMBRETE-NPL] Erro lembrete 1h ${consulta.nome}:`, e.message);
+        }
+      }
+
+      // ===== 30min antes: lembrete final (existente) =====
+      const chave30min = `lembrete30min_${consulta.id}`;
+      if (minFaltando > 0 && minFaltando <= 35 && !jaEnviado(chave30min)) {
+        marcarEnviado(chave30min);
+        try {
+          const msgLembrete = `${consulta.nome}, sua consulta trabalhista com ${tituloPessoa} ${consulta.colaboradora} ` +
             `comeca em 30 minutos!\n\n` +
             `O link para a reuniao online sera enviado em instantes.\n\n` +
             `Escritorio NPLADVS - Estamos te aguardando!`;
-
           await whatsapp.sendText(consulta.telefone, msgLembrete);
           console.log(`[LEMBRETE-NPL] Lembrete 30min enviado para ${consulta.nome}`);
         } catch (e) {
           console.log(`[LEMBRETE-NPL] Erro lembrete 30min ${consulta.nome}:`, e.message);
+        }
+      }
+
+      // ===== +2h após a consulta: re-engajamento de no-show =====
+      // Se lead ainda está na etapa 'agendamento' (não avançou para documentos/cliente),
+      // assume que a consulta não rendeu — manda mensagem de retomada.
+      const chaveNoShow = `noshow_${consulta.id}`;
+      if (minFaltando <= -120 && minFaltando >= -180 && !jaEnviado(chaveNoShow)) {
+        try {
+          const lead = await db.getLeadByPhone(consulta.telefone);
+          // Só dispara se ainda está em 'agendamento' — se já virou documentos/cliente,
+          // a consulta teve desfecho e a advogada está com o lead.
+          if (lead && lead.etapa_funil === 'agendamento') {
+            marcarEnviado(chaveNoShow);
+            const msg = `Oi, ${consulta.nome}! Aqui é a Laura. Não consegui confirmar se sua consulta de hoje rolou. ` +
+              `Deu algum imprevisto? Se precisar, consigo reagendar com ${tituloPessoa} ${consulta.colaboradora} ` +
+              `em outro horário — é só me dizer o melhor dia pra você.`;
+            await whatsapp.sendText(consulta.telefone, msg);
+            console.log(`[LEMBRETE-NPL] Re-engajamento no-show para ${consulta.nome}`);
+          } else {
+            // Marca como "processado" para não checar de novo, mesmo sem enviar.
+            marcarEnviado(chaveNoShow);
+          }
+        } catch (e) {
+          console.log(`[LEMBRETE-NPL] Erro no-show ${consulta.nome}:`, e.message);
         }
       }
     }
@@ -774,24 +1013,28 @@ async function checkLembretesConsulta() {
   }
 }
 
-// Verificar lembretes a cada 5 minutos (08h-18h Belém)
+// Verificar lembretes a cada 5 minutos (08h-20h Belém, cobre janelas de 48h/24h fora do horário comercial)
 setInterval(() => {
   const belemHour = new Date().toLocaleString('en-US', { timeZone: 'America/Belem', hour: 'numeric', hour12: false });
   const h = parseInt(belemHour);
-  if (h >= 8 && h <= 18) {
+  if (h >= 8 && h <= 20) {
     checkLembretesConsulta();
   }
 }, 5 * 60 * 1000);
 // Primeira verificação 2min após boot
 setTimeout(() => checkLembretesConsulta(), 2 * 60 * 1000);
 
-// Limpar lembretes enviados à meia-noite (para o dia seguinte)
+// Limpar chaves de lembrete antigas (> 7 dias) para evitar crescimento indefinido do Map
 setInterval(() => {
-  const belemHour = new Date().toLocaleString('en-US', { timeZone: 'America/Belem', hour: 'numeric', hour12: false });
-  if (parseInt(belemHour) === 0) {
-    lembretesEnviados.clear();
-    console.log('[LEMBRETE-NPL] Lembretes limpos para novo dia');
+  const corte = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  let removidas = 0;
+  for (const [chave, ts] of lembretesEnviados) {
+    if (ts < corte) {
+      lembretesEnviados.delete(chave);
+      removidas++;
+    }
   }
+  if (removidas > 0) console.log(`[LEMBRETE-NPL] Limpeza: ${removidas} chave(s) antiga(s) removida(s)`);
 }, 60 * 60 * 1000);
 
 // ===== WEBHOOK Z-API — ESCRITÓRIO (só salva, sem IA) =====
@@ -1183,7 +1426,7 @@ app.get('/api/conversas', async (req, res) => {
   }
 });
 
-app.get('/api/conversas/:id/mensagens', async (req, res) => {
+app.get('/api/conversas/:id/mensagens', auditAccess('read', 'mensagens'), async (req, res) => {
   try {
     res.json(await db.getConversaMensagens(req.params.id));
   } catch (e) {
@@ -1446,6 +1689,323 @@ app.get('/api/metricas', async (req, res) => {
   }
 });
 
+// ===== CALCULADORA DE VERBAS RESCISÓRIAS =====
+const verbasCalc = require('./verbas');
+
+app.post('/api/verbas/calcular', requireApiKey, (req, res) => {
+  try {
+    const { salario, mesesTrabalho, motivo, carteiraAssinada } = req.body;
+    if (!salario || !mesesTrabalho || !motivo) {
+      return res.status(400).json({ error: 'salario, mesesTrabalho e motivo são obrigatórios' });
+    }
+    if (!Object.values(verbasCalc.MOTIVOS).includes(motivo)) {
+      return res.status(400).json({
+        error: `motivo inválido. Use um de: ${Object.values(verbasCalc.MOTIVOS).join(', ')}`
+      });
+    }
+    const resultado = verbasCalc.calcularRescisao({
+      salario: parseFloat(salario),
+      mesesTrabalho: parseInt(mesesTrabalho),
+      motivo,
+      carteiraAssinada: carteiraAssinada !== false
+    });
+    res.json({ ok: true, ...resultado });
+  } catch (e) {
+    console.error('[VERBAS] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao calcular verbas' });
+  }
+});
+
+// ===== FEEDBACK DE MENSAGENS (thumbs up / down vindos do CRM) =====
+// Body: { mensagemId, conversaId, leadId, rating: 'positivo'|'negativo', comentario }
+app.post('/api/feedback', requireApiKey, async (req, res) => {
+  try {
+    const { mensagemId, conversaId, leadId, rating, comentario, usuario_nome } = req.body;
+    if (!rating || !['positivo', 'negativo'].includes(rating)) {
+      return res.status(400).json({ error: 'rating deve ser "positivo" ou "negativo"' });
+    }
+    if (!conversaId) {
+      return res.status(400).json({ error: 'conversaId obrigatório' });
+    }
+    const detalhes = JSON.stringify({ mensagemId, rating, comentario: comentario || null, usuario_nome: usuario_nome || null });
+    await db.trackEvent(conversaId, leadId || null, 'feedback_mensagem', detalhes);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[FEEDBACK] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar feedback' });
+  }
+});
+
+// Lista feedbacks registrados — útil para o CRM mostrar histórico de review
+app.get('/api/feedback', requireApiKey, async (req, res) => {
+  try {
+    const dias = parseInt(req.query.dias) || 30;
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+    const { data } = await db.supabase
+      .from('metricas')
+      .select('id, conversa_id, lead_id, detalhes, criado_em')
+      .eq('evento', 'feedback_mensagem')
+      .gte('criado_em', desde)
+      .order('criado_em', { ascending: false })
+      .limit(500);
+    const enriquecido = (data || []).map(f => {
+      let parsed = {};
+      try { parsed = typeof f.detalhes === 'string' ? JSON.parse(f.detalhes) : (f.detalhes || {}); } catch {}
+      return { ...f, ...parsed };
+    });
+    res.json(enriquecido);
+  } catch (e) {
+    console.error('[FEEDBACK] Erro listagem:', e.message);
+    res.status(500).json({ error: 'Erro ao listar feedback' });
+  }
+});
+
+// ===== ANÁLISE DE CONVERSÕES (perdidas vs fechadas) =====
+// Compara leads que viraram cliente com leads perdidos nos últimos N dias
+app.get('/api/analise/conversoes', requireApiKey, async (req, res) => {
+  try {
+    const dias = parseInt(req.query.dias) || 30;
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: leads } = await db.supabase
+      .from('leads')
+      .select('id, etapa_funil, score, tese_interesse, origem, ab_variante, criado_em, atualizado_em, data_primeiro_contato, conversas(id)')
+      .in('etapa_funil', ['cliente', 'perdido'])
+      .gte('atualizado_em', desde);
+
+    const clientes = (leads || []).filter(l => l.etapa_funil === 'cliente');
+    const perdidos = (leads || []).filter(l => l.etapa_funil === 'perdido');
+
+    const agregar = async (grupo) => {
+      if (grupo.length === 0) {
+        return { total: 0, score_medio: 0, tempo_medio_horas: 0, msgs_medias: 0, teses: {}, origens: {}, ab: {} };
+      }
+      const convIds = grupo.flatMap(l => (l.conversas || []).map(c => c.id));
+      let totalMsgs = 0;
+      if (convIds.length > 0) {
+        const { count } = await db.supabase
+          .from('mensagens')
+          .select('id', { count: 'exact', head: true })
+          .in('conversa_id', convIds);
+        totalMsgs = count || 0;
+      }
+      const tempos = grupo
+        .filter(l => l.data_primeiro_contato && l.atualizado_em)
+        .map(l => (new Date(l.atualizado_em) - new Date(l.data_primeiro_contato)) / 3600000);
+      const tempoMedio = tempos.length ? tempos.reduce((a, b) => a + b, 0) / tempos.length : 0;
+      const scoreMedio = grupo.reduce((s, l) => s + (l.score || 0), 0) / grupo.length;
+
+      const contar = (campo) => grupo.reduce((acc, l) => {
+        const k = (l[campo] || 'sem_info').toString().toLowerCase();
+        acc[k] = (acc[k] || 0) + 1;
+        return acc;
+      }, {});
+
+      return {
+        total: grupo.length,
+        score_medio: Math.round(scoreMedio),
+        tempo_medio_horas: Math.round(tempoMedio * 10) / 10,
+        msgs_medias: grupo.length ? Math.round(totalMsgs / grupo.length * 10) / 10 : 0,
+        teses: contar('tese_interesse'),
+        origens: contar('origem'),
+        ab: contar('ab_variante')
+      };
+    };
+
+    const statsCliente = await agregar(clientes);
+    const statsPerdido = await agregar(perdidos);
+    const total = clientes.length + perdidos.length;
+    const taxa_fechamento = total > 0 ? (clientes.length / total * 100).toFixed(1) + '%' : '0%';
+
+    res.json({
+      periodo: `${dias} dias`,
+      taxa_fechamento,
+      clientes: statsCliente,
+      perdidos: statsPerdido
+    });
+  } catch (e) {
+    console.error('[ANALISE] Erro:', e.message);
+    res.status(500).json({ error: 'Erro na analise' });
+  }
+});
+
+// ===== LOG DE AUDITORIA (leitura) =====
+// GET /api/auditoria?dias=7&acao=read&recurso=lead&usuario=Maria
+app.get('/api/auditoria', requireApiKey, async (req, res) => {
+  try {
+    const dias = parseInt(req.query.dias) || 7;
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+    const { data } = await db.supabase
+      .from('metricas')
+      .select('id, detalhes, criado_em')
+      .eq('evento', 'auditoria_acesso')
+      .gte('criado_em', desde)
+      .order('criado_em', { ascending: false })
+      .limit(1000);
+
+    const filtrarAcao = req.query.acao;
+    const filtrarRecurso = req.query.recurso;
+    const filtrarUsuario = req.query.usuario;
+
+    const registros = (data || []).map(r => {
+      let parsed = {};
+      try { parsed = typeof r.detalhes === 'string' ? JSON.parse(r.detalhes) : (r.detalhes || {}); } catch {}
+      return { id: r.id, criado_em: r.criado_em, ...parsed };
+    }).filter(r => {
+      if (filtrarAcao && r.acao !== filtrarAcao) return false;
+      if (filtrarRecurso && r.recurso !== filtrarRecurso) return false;
+      if (filtrarUsuario && !(r.usuario || '').toLowerCase().includes(filtrarUsuario.toLowerCase())) return false;
+      return true;
+    });
+
+    res.json({ periodo: `${dias} dias`, total: registros.length, registros });
+  } catch (e) {
+    console.error('[AUDITORIA] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao consultar auditoria' });
+  }
+});
+
+// ===== RELATÓRIO POR ADVOGADA =====
+// Conta consultas agendadas por colaboradora + taxa de fechamento
+// (baseado em consulta_agendada no metricas, cruzando com etapa do lead)
+app.get('/api/relatorio/advogadas', requireApiKey, async (req, res) => {
+  try {
+    const dias = parseInt(req.query.dias) || 30;
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: eventos } = await db.supabase
+      .from('metricas')
+      .select('lead_id, detalhes, criado_em')
+      .eq('evento', 'consulta_agendada')
+      .gte('criado_em', desde);
+
+    const porAdvogada = {};
+    for (const ev of (eventos || [])) {
+      // detalhes = "ISO_INICIO - Colaboradora"
+      const m = (ev.detalhes || '').match(/-\s*(.+)$/);
+      const colab = m ? m[1].trim() : 'Desconhecida';
+      if (!porAdvogada[colab]) {
+        porAdvogada[colab] = { total_agendadas: 0, fechadas: 0, em_documentos: 0, perdidas: 0, lead_ids: new Set() };
+      }
+      porAdvogada[colab].total_agendadas++;
+      if (ev.lead_id) porAdvogada[colab].lead_ids.add(ev.lead_id);
+    }
+
+    // Buscar etapa atual dos leads envolvidos
+    const todosLeadIds = [...new Set(Object.values(porAdvogada).flatMap(a => [...a.lead_ids]))];
+    const leadEtapas = {};
+    if (todosLeadIds.length > 0) {
+      const { data: leads } = await db.supabase
+        .from('leads')
+        .select('id, etapa_funil')
+        .in('id', todosLeadIds);
+      for (const l of (leads || [])) leadEtapas[l.id] = l.etapa_funil;
+    }
+
+    for (const [colab, stats] of Object.entries(porAdvogada)) {
+      for (const lid of stats.lead_ids) {
+        const etapa = leadEtapas[lid];
+        if (etapa === 'cliente') stats.fechadas++;
+        else if (etapa === 'documentos') stats.em_documentos++;
+        else if (etapa === 'perdido') stats.perdidas++;
+      }
+      stats.taxa_fechamento = stats.total_agendadas > 0
+        ? (stats.fechadas / stats.total_agendadas * 100).toFixed(1) + '%'
+        : '0%';
+      delete stats.lead_ids;
+    }
+
+    res.json({ periodo: `${dias} dias`, por_advogada: porAdvogada });
+  } catch (e) {
+    console.error('[REL-ADV] Erro:', e.message);
+    res.status(500).json({ error: 'Erro no relatorio por advogada' });
+  }
+});
+
+// ===== MAPA DE HORÁRIOS DE ENGAJAMENTO =====
+// Distribuição de mensagens de leads por hora do dia e dia da semana (Belém)
+app.get('/api/analise/horarios', requireApiKey, async (req, res) => {
+  try {
+    const dias = parseInt(req.query.dias) || 30;
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: msgs } = await db.supabase
+      .from('mensagens')
+      .select('criado_em, role')
+      .eq('role', 'user')
+      .gte('criado_em', desde)
+      .limit(10000);
+
+    const diasSem = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+    const porHora = Array(24).fill(0);
+    const porDiaSemana = Array(7).fill(0);
+    const heatmap = {}; // "dia_hora" => count
+
+    for (const m of (msgs || [])) {
+      // Converter para horário Belém (UTC-3)
+      const belem = new Date(new Date(m.criado_em).toLocaleString('en-US', { timeZone: 'America/Belem' }));
+      const hora = belem.getHours();
+      const dia = belem.getDay();
+      porHora[hora]++;
+      porDiaSemana[dia]++;
+      const chave = `${diasSem[dia]}_${hora}`;
+      heatmap[chave] = (heatmap[chave] || 0) + 1;
+    }
+
+    const melhorHora = porHora.indexOf(Math.max(...porHora));
+    const melhorDia = diasSem[porDiaSemana.indexOf(Math.max(...porDiaSemana))];
+
+    res.json({
+      periodo: `${dias} dias`,
+      total_mensagens: (msgs || []).length,
+      por_hora: porHora,
+      por_dia_semana: Object.fromEntries(diasSem.map((d, i) => [d, porDiaSemana[i]])),
+      heatmap,
+      melhor_hora: melhorHora,
+      melhor_dia: melhorDia
+    });
+  } catch (e) {
+    console.error('[ANALISE-HORARIOS] Erro:', e.message);
+    res.status(500).json({ error: 'Erro na analise de horarios' });
+  }
+});
+
+// ===== MÉTRICAS POR ORIGEM =====
+// Agrupa leads por campo `origem` (Instagram, Google, WhatsApp direto, indicação, etc.)
+app.get('/api/analise/origens', requireApiKey, async (req, res) => {
+  try {
+    const dias = parseInt(req.query.dias) || 30;
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: leads } = await db.supabase
+      .from('leads')
+      .select('origem, etapa_funil, score')
+      .eq('escritorio', config.ESCRITORIO)
+      .gte('criado_em', desde);
+
+    const porOrigem = {};
+    for (const l of (leads || [])) {
+      const o = (l.origem || 'sem_origem').trim();
+      if (!porOrigem[o]) {
+        porOrigem[o] = { total: 0, cliente: 0, agendamento: 0, documentos: 0, perdido: 0, score_soma: 0 };
+      }
+      porOrigem[o].total++;
+      porOrigem[o].score_soma += (l.score || 0);
+      if (porOrigem[o][l.etapa_funil] !== undefined) porOrigem[o][l.etapa_funil]++;
+    }
+    for (const o of Object.values(porOrigem)) {
+      o.score_medio = o.total > 0 ? Math.round(o.score_soma / o.total) : 0;
+      o.taxa_cliente = o.total > 0 ? (o.cliente / o.total * 100).toFixed(1) + '%' : '0%';
+      delete o.score_soma;
+    }
+
+    res.json({ periodo: `${dias} dias`, por_origem: porOrigem });
+  } catch (e) {
+    console.error('[ANALISE-ORIGENS] Erro:', e.message);
+    res.status(500).json({ error: 'Erro na analise de origens' });
+  }
+});
+
 // ===== LEADS (endpoints para o funil do CRM) =====
 
 app.get('/api/leads', async (req, res) => {
@@ -1460,7 +2020,7 @@ app.get('/api/leads', async (req, res) => {
   }
 });
 
-app.get('/api/leads/:id', async (req, res) => {
+app.get('/api/leads/:id', auditAccess('read', 'lead'), async (req, res) => {
   try {
     const lead = await db.getLeadById(req.params.id);
     if (!lead) return res.status(404).json({ error: 'Lead não encontrado' });
@@ -1473,7 +2033,7 @@ app.get('/api/leads/:id', async (req, res) => {
 
 const ETAPAS_FUNIL_VALIDAS = ['novo', 'contato', 'agendamento', 'documentos', 'cliente', 'perdido'];
 
-app.put('/api/leads/:id', requireApiKey, async (req, res) => {
+app.put('/api/leads/:id', requireApiKey, auditAccess('update', 'lead'), async (req, res) => {
   try {
     const allowed = ['nome', 'email', 'etapa_funil', 'tese_interesse', 'notas', 'origem'];
     const updates = {};
@@ -1589,7 +2149,7 @@ app.post('/api/documentos/organizar', requireApiKey, async (req, res) => {
 });
 
 // Auditoria rápida (sem upload, só verifica o que tem)
-app.get('/api/documentos/auditoria/:phone', async (req, res) => {
+app.get('/api/documentos/auditoria/:phone', auditAccess('read', 'documentos'), async (req, res) => {
   try {
     if (!documentos) return res.status(503).json({ error: 'Módulo de documentos não disponível' });
 

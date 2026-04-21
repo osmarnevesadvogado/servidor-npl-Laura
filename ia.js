@@ -22,7 +22,12 @@ TOM E ESTILO:
 - Seu objetivo principal e fazer uma triagem rapida e, se viavel, agendar uma consulta gratuita
 
 APRESENTACAO (somente na primeira mensagem da conversa, quando o historico estiver vazio):
-"Ola! Sou a Laura, assistente virtual do escritorio NPLADVS, especializado em direitos trabalhistas. Me conta, o que aconteceu?"
+"Ola! Sou a Laura, assistente virtual (IA) do escritorio NPLADVS, especializado em direitos trabalhistas. Estou aqui para tirar suas duvidas e te ajudar com uma triagem inicial — a qualquer momento voce pode pedir para falar com um advogado. Me conta, o que aconteceu?"
+
+TRANSPARENCIA — SE O LEAD PERGUNTAR SE VOCE E IA OU HUMANA:
+- Responda a verdade com naturalidade: "Sou uma assistente virtual (IA), [nome], mas trabalho junto com os advogados do escritorio e posso te ajudar com a triagem. Se preferir falar direto com um advogado, e so me avisar que aciono a equipe."
+- NUNCA afirme ser humana. NUNCA minta sobre sua natureza.
+- Se o lead pedir para falar com um advogado/humano, responda: "Claro, [nome]. Vou acionar um advogado da equipe para te atender. Enquanto isso, se quiser, posso adiantar a triagem inicial." E o sistema pausa automaticamente.
 
 REGRA PRINCIPAL — TRIAGEM INTELIGENTE:
 Consulte a FICHA DO LEAD e siga esta logica. Voce NAO precisa seguir uma ordem rigida — adapte conforme a conversa fluir:
@@ -121,6 +126,13 @@ LIDANDO COM OBJECOES:
 - "Ja tenho advogado" -> "[nome], entendo. Se quiser uma segunda opiniao especializada em trabalhista, a consulta e gratuita e sem compromisso."
 - "Funciona mesmo?" / "Nao confio" -> "[nome], entendo sua preocupacao. O escritorio so cobra se ganhar o caso, entao o interesse e o mesmo que o seu: resolver. A consulta gratuita serve justamente pra voce avaliar sem compromisso."
 - Se o lead mencionar que varias pessoas foram afetadas (colegas de trabalho), pergunte: "Quantas pessoas foram afetadas? Casos coletivos costumam ser ainda mais fortes."
+
+ESTIMATIVA DE VERBAS (quando disponivel na FICHA DO LEAD):
+Se a secao FICHA DO LEAD contiver "ESTIMATIVA_VERBAS: ...", voce tem uma estimativa PRE-CALCULADA do que o lead pode receber. Use como argumento de conversao quando fizer sentido (depois de avaliar o caso, antes de oferecer horario).
+- Apresente como ESTIMATIVA preliminar, nunca como valor definitivo: "[nome], fazendo uma estimativa preliminar com base no que voce me contou, voce pode ter direito a aproximadamente R$ XXXX entre verbas rescisorias e FGTS. Mas sao so valores iniciais — o advogado pode identificar muito mais na consulta. Posso reservar um horario?"
+- SEMPRE deixe claro que e estimativa e que o calculo final e na consulta
+- NAO mencione valores especificos se nao estiver na FICHA DO LEAD. NUNCA invente valores.
+- Se o lead perguntar "quanto posso receber?" e voce ainda nao tem salario+tempo+motivo, pergunte esses dados antes.
 
 INFORMACAO SOBRE PRAZOS:
 - Prazo prescricional: 2 anos apos sair da empresa
@@ -297,6 +309,91 @@ function buildFichaLead(lead, history, contexto) {
 
     if (lead && lead.email) {
       linhas.push(`- Email: ${lead.email}`);
+    }
+
+    // Detecção de tese trabalhista (contexto técnico específico)
+    try {
+      const teses = require('./teses');
+      const textoConversaCompleta = (history || []).filter(m => m.role === 'user').map(m => m.content).join('\n');
+      const detectado = teses.detectarTese(textoConversaCompleta);
+      const blocoTese = teses.formatarParaFicha(detectado);
+      if (blocoTese) {
+        linhas.push(`\n${blocoTese}`);
+        linhas.push(`USO: use o contexto tecnico acima para dar argumentos concretos e relevantes. Se faltam respostas das perguntas uteis, faça UMA delas (nunca todas de uma vez).`);
+      }
+    } catch (e) {
+      // Módulo teses opcional
+    }
+
+    // Detecção de objeções na última mensagem do lead
+    try {
+      const objecoes = require('./objecoes');
+      const ultimaMsgLead = (history || []).filter(m => m.role === 'user').slice(-1)[0];
+      if (ultimaMsgLead) {
+        const detectadas = objecoes.detectarObjecoes(ultimaMsgLead.content);
+        const bloco = objecoes.formatarParaFicha(detectadas);
+        if (bloco) {
+          linhas.push(`\n${bloco}`);
+          linhas.push(`Aborde as objecoes acima com empatia e argumentos concretos. NAO seja pushy.`);
+        }
+      }
+    } catch (e) {
+      // Módulo objecoes opcional
+    }
+
+    // Estimativa de verbas rescisórias (se temos dados suficientes)
+    try {
+      const verbas = require('./verbas');
+      const textoConversa = (history || []).filter(m => m.role === 'user').map(m => m.content).join('\n');
+      const dados = verbas.extrairDadosDaConversa(textoConversa);
+      if (dados.salario && dados.mesesTrabalho && dados.motivo) {
+        const resultado = verbas.calcularRescisao({
+          salario: dados.salario,
+          mesesTrabalho: dados.mesesTrabalho,
+          motivo: dados.motivo,
+          carteiraAssinada: dados.carteiraAssinada !== false
+        });
+        if (!resultado.erro) {
+          const total = resultado.total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+          const fgts = resultado.fgts_estimado.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+          linhas.push(`\nESTIMATIVA_VERBAS: ~${total} em verbas rescisorias + ~${fgts} de FGTS (motivo: ${dados.motivo}, ${dados.mesesTrabalho} meses, salario R$ ${dados.salario})`);
+          linhas.push(`USO: apresente como estimativa preliminar quando fizer sentido — depois de avaliar caso, antes de oferecer horario. Sempre diga que e estimativa e o advogado calcula tudo na consulta.`);
+        }
+      }
+    } catch (e) {
+      // Módulo verbas opcional — se falhar, segue sem estimativa
+    }
+
+    // Alerta de prazo prescricional (2 anos)
+    try {
+      const prescricao = require('./prescricao');
+      const textoConversa = (history || []).filter(m => m.role === 'user').map(m => m.content).join('\n');
+      const alerta = prescricao.formatarAlerta(textoConversa);
+      const bloco = prescricao.formatarParaFicha(alerta);
+      if (bloco && alerta.nivel !== 'ok') {
+        linhas.push(`\n${bloco}`);
+      }
+    } catch (e) {
+      // Opcional
+    }
+
+    // Base de processos similares (contexto para dar confiança, sem expor dados)
+    try {
+      const teses = require('./teses');
+      const textoConversa = (history || []).filter(m => m.role === 'user').map(m => m.content).join('\n');
+      const detectado = teses.detectarTese(textoConversa);
+      if (detectado && lead) {
+        const materia = teses.TESES[detectado.principal]?.titulo;
+        const db = require('./database');
+        if (materia && db.contarProcessosSimilares) {
+          // Atenção: ficha é síncrona — usar then/catch descartável
+          // Como buildFichaLead é chamado de forma síncrona no prompt, o contador precisa ser async.
+          // Solução: expor a materia como hint no prompt e deixar Laura mencionar "nosso escritório tem experiência em X"
+          linhas.push(`\nCASOS_SIMILARES: escritorio ja atendeu casos de ${materia}. Se fizer sentido, use como argumento de credibilidade SEM prometer resultado.`);
+        }
+      }
+    } catch (e) {
+      // Opcional
     }
   }
 
@@ -601,9 +698,60 @@ Regras:
   }
 }
 
+// ===== RESUMO AUTOMATICO DO CASO (gerado quando lead agenda consulta) =====
+// Analisa o historico da conversa e gera um resumo executivo de 4-6 linhas para o advogado
+async function gerarResumoCaso(historico, lead) {
+  if (!historico || historico.length === 0) return null;
+
+  const conversaTexto = historico
+    .filter(m => m.role === 'user' || m.role === 'assistant')
+    .slice(-40)
+    .map(m => `${m.role === 'user' ? 'LEAD' : 'LAURA'}: ${m.content}`)
+    .join('\n');
+
+  const prompt = `Voce e um assistente juridico especializado em direito trabalhista. Analise a conversa abaixo entre a Laura (IA de triagem) e um lead do escritorio NPLADVS, e gere um RESUMO EXECUTIVO para o advogado que vai atender a consulta.
+
+FORMATO OBRIGATORIO (4 a 7 linhas, sem enrolacao):
+TIPO DE ACAO: [rescisao indireta / horas extras / reconhecimento de vinculo / acidente de trabalho / assedio / verbas rescisorias / outro - especifique]
+VINCULO: [tempo na empresa + tinha carteira assinada? + tipo de empresa (privada/rural/etc)]
+SITUACAO ATUAL: [ainda trabalha la ou ja saiu? se saiu, ha quanto tempo]
+PRINCIPAIS FATOS: [2-3 fatos mais relevantes do caso]
+URGENCIA: [VIAVEL / URGENTE prazo < 6 meses / MUITO URGENTE prazo < 3 meses]
+PONTOS DE ATENCAO: [contradições, info faltante, observações importantes - escreva "nenhum" se nao houver]
+
+REGRAS:
+- Use APENAS informacoes que aparecem na conversa. NAO invente.
+- Se alguma info crítica nao foi coletada, escreva "nao informado"
+- Seja objetivo e tecnico. Escreva para um advogado, nao para o cliente.
+- NAO inclua saudacoes, conclusoes ou comentarios.
+
+NOME DO LEAD: ${lead?.nome || 'nao informado'}
+TESE DE INTERESSE: ${lead?.tese_interesse || 'a identificar'}
+
+CONVERSA:
+${conversaTexto}
+
+RESUMO EXECUTIVO:`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: config.CLAUDE_MODEL,
+      max_tokens: 600,
+      messages: [{ role: 'user', content: prompt }]
+    });
+    const resumo = response.content[0].text.trim();
+    console.log(`[RESUMO-NPL] Gerado para ${lead?.nome || 'lead'}: ${resumo.slice(0, 80)}...`);
+    return resumo;
+  } catch (e) {
+    console.error('[RESUMO-NPL] Erro ao gerar resumo:', e.message);
+    return null;
+  }
+}
+
 module.exports = {
   generateResponse,
   generateFollowUp,
+  gerarResumoCaso,
   trimResponse,
   setCalendar
 };

@@ -36,6 +36,14 @@ O CRM frontend (hospedado no GitHub Pages, repositório separado) chama diretame
 | POST | `/api/dias-nao-uteis` | Adicionar dia não útil `{data: 'YYYY-MM-DD', tipo: 'enforcado\|feriado\|ferias', descricao}` |
 | DELETE | `/api/dias-nao-uteis/:id` | Remover dia não útil |
 | POST | `/api/recuperar-vacuo` | Dispara Laura para leads sem resposta `{desde, instancia}` |
+| POST | `/api/verbas/calcular` | Estimativa de verbas rescisórias `{salario, mesesTrabalho, motivo, carteiraAssinada}` → CLT preview |
+| POST | `/api/feedback` | Registra 👍/👎 do CRM `{mensagemId, conversaId, leadId, rating, comentario, usuario_nome}` |
+| GET | `/api/feedback?dias=30` | Lista feedbacks recentes |
+| GET | `/api/analise/conversoes?dias=30` | Compara leads `cliente` vs `perdido` (score, tempo, msgs, origens, A/B) |
+| GET | `/api/relatorio/advogadas?dias=30` | Consultas por colaboradora + taxa de fechamento |
+| GET | `/api/analise/horarios?dias=30` | Heatmap mensagens/hora × dia da semana (Belém) |
+| GET | `/api/analise/origens?dias=30` | Leads por origem (Instagram/Google/etc) + taxa de conversão |
+| GET | `/api/auditoria?dias=7&acao=read&recurso=lead&usuario=X` | Log de acesso a dados sensíveis |
 | POST | `/webhook/zapi` | Webhook da Laura (processa com IA) |
 | POST | `/webhook/zapi-escritorio` | Webhook do escritório (só salva, sem IA). Conversas com `origem_numero = 'escritorio'` |
 
@@ -120,7 +128,7 @@ Mesmo objeto acima + conversas vinculadas:
 
 **metricas** — eventos rastreados
 - `id`, `conversa_id`, `lead_id`, `evento`, `detalhes`, `escritorio`, `criado_em`
-- Eventos: primeiro_contato, lead_quente, consulta_agendada, followup_2h, followup_4h, followup_24h, followup_72h, etapa_avancou
+- Eventos: primeiro_contato, lead_quente, consulta_agendada, followup_2h, followup_4h, followup_24h, followup_72h, etapa_avancou, objecao, alucinacao_detectada, feedback_mensagem, prazo_prescricional, auditoria_acesso
 
 **tarefas** — tarefas do CRM
 - `id`, `descricao`, `data_limite`, `prioridade`, `status`, `responsavel`
@@ -151,6 +159,17 @@ Calculado a cada mensagem do lead. Critérios:
 - Janela de contexto: 150 mensagens enviadas ao Claude
 - Ficha do lead: 40 mensagens anteriores resumidas
 - trimResponse: máx 6 frases / 800 chars
+- Transparência: Laura se apresenta como IA, oferece falar com advogado a qualquer momento
+
+## Módulos de inteligência da Laura
+- `teses.js`: detecta tipo de caso (rescisão indireta, horas extras, sem registro, acidente/doença, assédio, verbas rescisórias, insalubridade) e injeta contexto técnico
+- `objecoes.js`: detecta objeções (preço, pensar, já tem advogado, desconfiança, medo de retaliação, tempo, dúvida do caso) e injeta estratégia de resposta
+- `verbas.js`: calculadora CLT de rescisão; extrai salário/tempo/motivo da conversa e gera estimativa preliminar
+- `prescricao.js`: extrai "saiu há X" e alerta sobre prazo de 2 anos (níveis: ok/atenção/urgente/prescrito)
+- `alucinacao.js`: pós-análise das respostas para detectar promessas fora da política (garantia de resultado, valor definitivo, falsa credencial, honorários, conselho jurídico final); severidade alta notifica Dr. Osmar
+- `checkLembretesConsulta`: jobs agendados enviam 48h (cobrança docs), 24h (confirmação), 08h matinal, 1h, 30min antes; +2h depois re-engaja no-show se lead ainda em etapa agendamento
+- Resumo automático do caso: após agendar consulta, Claude gera resumo executivo salvo em `leads.notas` (TIPO DE AÇÃO, VÍNCULO, SITUAÇÃO, FATOS, URGÊNCIA, PONTOS DE ATENÇÃO)
+- Auditoria: acesso a leads/mensagens/documentos registra evento `auditoria_acesso` com usuário, IP, endpoint
 
 ## Agendamento (Google Calendar)
 - Detecção: só cria evento quando Laura diz "Agendado!" + data/hora
