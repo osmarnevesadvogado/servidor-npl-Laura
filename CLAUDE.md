@@ -13,6 +13,9 @@ O CRM frontend (hospedado no GitHub Pages, repositório separado) chama diretame
 | GET | `/api/health` | Status do servidor |
 | GET | `/api/conversas` | Lista conversas |
 | GET | `/api/conversas/:id/mensagens` | Mensagens de uma conversa |
+| GET | `/api/leads` | Lista leads com dados completos. Filtros: `?etapa=contato&limit=100` |
+| GET | `/api/leads/:id` | Detalhes de um lead + conversas vinculadas |
+| PUT | `/api/leads/:id` | Atualizar lead `{nome, email, etapa_funil, tese_interesse, notas, origem}` |
 | GET | `/api/metricas` | Leads por etapa, conversas ativas |
 | GET | `/api/agendamentos?dias=30` | Lista consultas do Google Calendar (nome, telefone, data, colaboradora) |
 | GET | `/api/analytics?dias=30` | Funil de conversão, A/B testing, scoring |
@@ -36,6 +39,36 @@ O CRM frontend (hospedado no GitHub Pages, repositório separado) chama diretame
 | POST | `/webhook/zapi` | Webhook da Laura (processa com IA) |
 | POST | `/webhook/zapi-escritorio` | Webhook do escritório (só salva, sem IA). Conversas com `origem_numero = 'escritorio'` |
 
+### Resposta do GET /api/leads
+```json
+[{
+  "id": "uuid",
+  "nome": "João Silva",
+  "telefone": "5591999999999",
+  "email": "joao@email.com",
+  "etapa_funil": "contato",
+  "tese_interesse": "rescisão indireta",
+  "notas": "...",
+  "origem": "whatsapp",
+  "score": 45,
+  "score_detalhes": "engajado,resposta_rapida",
+  "ab_variante": "A",
+  "instancia": "escritorio",
+  "criado_em": "2026-04-20T...",
+  "atualizado_em": "2026-04-21T...",
+  "data_primeiro_contato": "2026-04-20T..."
+}]
+```
+
+### Resposta do GET /api/leads/:id
+Mesmo objeto acima + conversas vinculadas:
+```json
+{
+  "...campos acima",
+  "conversas": [{ "id": "uuid", "status": "ativa", "criado_em": "..." }]
+}
+```
+
 ### Resposta do /api/analytics
 ```json
 {
@@ -53,7 +86,7 @@ O CRM frontend (hospedado no GitHub Pages, repositório separado) chama diretame
     "agendamento": "37.5%",
     "perda": "20%"
   },
-  "leads_por_etapa": { "novo": 20, "contato": 30, "proposta": 30, "convertido": 10, "perdido": 10 },
+  "leads_por_etapa": { "novo": 20, "contato": 30, "proposta": 20, "agendamento": 15, "convertido": 10, "perdido": 10 },
   "score_medio_por_etapa": { "novo": 5, "contato": 25, "proposta": 55, "convertido": 75 },
   "ab_testing": {
     "A": { "total": 50, "convertido": 8, "taxa": "16%", "nome_variante": "consulta_gratuita" },
@@ -69,7 +102,7 @@ O CRM frontend (hospedado no GitHub Pages, repositório separado) chama diretame
 
 **leads** — dados dos leads
 - `id`, `nome`, `telefone`, `email`, `escritorio` ('npl'), `instancia`
-- `etapa_funil`: novo → contato → proposta → convertido / perdido
+- `etapa_funil`: novo → contato → proposta → agendamento → convertido / perdido
 - `tese_interesse`, `notas`, `origem`
 - `score` (0-100): scoring automático do lead
 - `score_detalhes`: critérios (ex: "engajado,resposta_rapida,quer_agendar")
@@ -129,6 +162,8 @@ Calculado a cada mensagem do lead. Critérios:
 - Reserva: 20 minutos por slot
 - Escassez: comunica "últimos horários" quando ≤3 slots
 - Janela: busca 10 dias úteis
+- **Funil**: ao criar consulta, lead é movido automaticamente para etapa `agendamento`
+- Leads em `agendamento` não recebem follow-ups nem entram em recuperação de vácuo
 
 ## Equipe do escritório NPLADVS
 - Sócios: Dr. Osmar Neves, Dr. Bruno Pinheiro, Dr. Rodrigo Lins
@@ -157,6 +192,7 @@ Para feriados adicionais, enforcados e férias da equipe, use a tabela `dias_nao
 - 4h: texto
 - 24h: texto
 - 72h: texto + marca lead como perdido
+- Não se aplica a leads em etapa `agendamento`, `convertido` ou `perdido`
 - Validação: descarta mensagens inválidas antes de enviar
 - Contexto: referencia o caso específico do lead
 
