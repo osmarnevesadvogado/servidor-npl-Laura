@@ -744,6 +744,20 @@ async function checkFollowUps() {
       const lastMsgs = msgsByConv[conv.id];
       if (!lastMsgs || lastMsgs.length === 0) continue;
 
+      // Proteção extra: verificar se já tem consulta agendada (metricas)
+      // mesmo que etapa não tenha sido atualizada corretamente
+      try {
+        const { data: jaAgendou } = await db.supabase
+          .from('metricas')
+          .select('id')
+          .eq('conversa_id', conv.id)
+          .eq('evento', 'consulta_agendada')
+          .limit(1);
+        if (jaAgendou && jaAgendou.length > 0) {
+          continue; // Pular follow-up — lead já tem consulta marcada
+        }
+      } catch (e) {}
+
       const lastMsg = lastMsgs[0];
       const hoursAgo = (now - new Date(lastMsg.criado_em).getTime()) / (1000 * 60 * 60);
 
