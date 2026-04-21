@@ -8,6 +8,7 @@ const whatsapp = require('./whatsapp');
 const db = require('./database');
 const ia = require('./ia');
 const fluxo = require('./fluxo');
+const alucinacao = require('./alucinacao');
 let audio;
 try { audio = require('./audio'); } catch (e) { console.log('[INIT-NPL] Audio nao disponivel'); }
 let calendar;
@@ -349,6 +350,27 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
     }
 
     const reply = ia.trimResponse(rawReply);
+
+    // Auditoria anti-alucinação: registra flags sem bloquear envio.
+    // Alta severidade notifica Dr. Osmar para revisão.
+    try {
+      const auditoria = alucinacao.analisar(reply);
+      if (auditoria.flags.length > 0) {
+        await db.trackEvent(conversa.id, lead?.id, 'alucinacao_detectada', JSON.stringify({
+          severidade: auditoria.severidadeMax,
+          flags: auditoria.flags.map(f => ({ tipo: f.tipo, trecho: f.trecho }))
+        }));
+        if (auditoria.severidadeMax === 'alta' && config.OSMAR_PHONE) {
+          const tipos = auditoria.flags.map(f => f.tipo).join(', ');
+          const alerta = `[LAURA - ALERTA] Resposta possivelmente fora da politica para ${lead?.nome || phone}:\n\n` +
+            `Tipo: ${tipos}\n\nTrecho: "${reply.slice(0, 200)}"\n\nRever no CRM.`;
+          whatsapp.sendText(config.OSMAR_PHONE, alerta).catch(() => {});
+        }
+        console.log(`[ALUCINACAO-NPL] ${phone}: ${auditoria.flags.map(f => f.tipo).join(', ')} (${auditoria.severidadeMax})`);
+      }
+    } catch (e) {
+      console.log('[ALUCINACAO-NPL] Erro na analise:', e.message);
+    }
 
     // Detectar loop de despedida: se últimas 2 respostas da Laura já foram
     // despedidas ("até mais", "tenha um otimo"...), pausar a IA automaticamente
@@ -1626,6 +1648,119 @@ app.post('/api/verbas/calcular', requireApiKey, (req, res) => {
   } catch (e) {
     console.error('[VERBAS] Erro:', e.message);
     res.status(500).json({ error: 'Erro ao calcular verbas' });
+  }
+});
+
+// ===== FEEDBACK DE MENSAGENS (thumbs up / down vindos do CRM) =====
+// Body: { mensagemId, conversaId, leadId, rating: 'positivo'|'negativo', comentario }
+app.post('/api/feedback', requireApiKey, async (req, res) => {
+  try {
+    const { mensagemId, conversaId, leadId, rating, comentario, usuario_nome } = req.body;
+    if (!rating || !['positivo', 'negativo'].includes(rating)) {
+      return res.status(400).json({ error: 'rating deve ser "positivo" ou "negativo"' });
+    }
+    if (!conversaId) {
+      return res.status(400).json({ error: 'conversaId obrigatório' });
+    }
+    const detalhes = JSON.stringify({ mensagemId, rating, comentario: comentario || null, usuario_nome: usuario_nome || null });
+    await db.trackEvent(conversaId, leadId || null, 'feedback_mensagem', detalhes);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[FEEDBACK] Erro:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar feedback' });
+  }
+});
+
+// Lista feedbacks registrados — útil para o CRM mostrar histórico de review
+app.get('/api/feedback', requireApiKey, async (req, res) => {
+  try {
+    const dias = parseInt(req.query.dias) || 30;
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+    const { data } = await db.supabase
+      .from('metricas')
+      .select('id, conversa_id, lead_id, detalhes, criado_em')
+      .eq('evento', 'feedback_mensagem')
+      .gte('criado_em', desde)
+      .order('criado_em', { ascending: false })
+      .limit(500);
+    const enriquecido = (data || []).map(f => {
+      let parsed = {};
+      try { parsed = typeof f.detalhes === 'string' ? JSON.parse(f.detalhes) : (f.detalhes || {}); } catch {}
+      return { ...f, ...parsed };
+    });
+    res.json(enriquecido);
+  } catch (e) {
+    console.error('[FEEDBACK] Erro listagem:', e.message);
+    res.status(500).json({ error: 'Erro ao listar feedback' });
+  }
+});
+
+// ===== ANÁLISE DE CONVERSÕES (perdidas vs fechadas) =====
+// Compara leads que viraram cliente com leads perdidos nos últimos N dias
+app.get('/api/analise/conversoes', requireApiKey, async (req, res) => {
+  try {
+    const dias = parseInt(req.query.dias) || 30;
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: leads } = await db.supabase
+      .from('leads')
+      .select('id, etapa_funil, score, tese_interesse, origem, ab_variante, criado_em, atualizado_em, data_primeiro_contato, conversas(id)')
+      .in('etapa_funil', ['cliente', 'perdido'])
+      .gte('atualizado_em', desde);
+
+    const clientes = (leads || []).filter(l => l.etapa_funil === 'cliente');
+    const perdidos = (leads || []).filter(l => l.etapa_funil === 'perdido');
+
+    const agregar = async (grupo) => {
+      if (grupo.length === 0) {
+        return { total: 0, score_medio: 0, tempo_medio_horas: 0, msgs_medias: 0, teses: {}, origens: {}, ab: {} };
+      }
+      const convIds = grupo.flatMap(l => (l.conversas || []).map(c => c.id));
+      let totalMsgs = 0;
+      if (convIds.length > 0) {
+        const { count } = await db.supabase
+          .from('mensagens')
+          .select('id', { count: 'exact', head: true })
+          .in('conversa_id', convIds);
+        totalMsgs = count || 0;
+      }
+      const tempos = grupo
+        .filter(l => l.data_primeiro_contato && l.atualizado_em)
+        .map(l => (new Date(l.atualizado_em) - new Date(l.data_primeiro_contato)) / 3600000);
+      const tempoMedio = tempos.length ? tempos.reduce((a, b) => a + b, 0) / tempos.length : 0;
+      const scoreMedio = grupo.reduce((s, l) => s + (l.score || 0), 0) / grupo.length;
+
+      const contar = (campo) => grupo.reduce((acc, l) => {
+        const k = (l[campo] || 'sem_info').toString().toLowerCase();
+        acc[k] = (acc[k] || 0) + 1;
+        return acc;
+      }, {});
+
+      return {
+        total: grupo.length,
+        score_medio: Math.round(scoreMedio),
+        tempo_medio_horas: Math.round(tempoMedio * 10) / 10,
+        msgs_medias: grupo.length ? Math.round(totalMsgs / grupo.length * 10) / 10 : 0,
+        teses: contar('tese_interesse'),
+        origens: contar('origem'),
+        ab: contar('ab_variante')
+      };
+    };
+
+    const statsCliente = await agregar(clientes);
+    const statsPerdido = await agregar(perdidos);
+    const total = clientes.length + perdidos.length;
+    const taxa_fechamento = total > 0 ? (clientes.length / total * 100).toFixed(1) + '%' : '0%';
+
+    res.json({
+      periodo: `${dias} dias`,
+      taxa_fechamento,
+      clientes: statsCliente,
+      perdidos: statsPerdido
+    });
+  } catch (e) {
+    console.error('[ANALISE] Erro:', e.message);
+    res.status(500).json({ error: 'Erro na analise' });
   }
 });
 
