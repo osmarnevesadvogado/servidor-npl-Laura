@@ -1764,6 +1764,147 @@ app.get('/api/analise/conversoes', requireApiKey, async (req, res) => {
   }
 });
 
+// ===== RELATÓRIO POR ADVOGADA =====
+// Conta consultas agendadas por colaboradora + taxa de fechamento
+// (baseado em consulta_agendada no metricas, cruzando com etapa do lead)
+app.get('/api/relatorio/advogadas', requireApiKey, async (req, res) => {
+  try {
+    const dias = parseInt(req.query.dias) || 30;
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: eventos } = await db.supabase
+      .from('metricas')
+      .select('lead_id, detalhes, criado_em')
+      .eq('evento', 'consulta_agendada')
+      .gte('criado_em', desde);
+
+    const porAdvogada = {};
+    for (const ev of (eventos || [])) {
+      // detalhes = "ISO_INICIO - Colaboradora"
+      const m = (ev.detalhes || '').match(/-\s*(.+)$/);
+      const colab = m ? m[1].trim() : 'Desconhecida';
+      if (!porAdvogada[colab]) {
+        porAdvogada[colab] = { total_agendadas: 0, fechadas: 0, em_documentos: 0, perdidas: 0, lead_ids: new Set() };
+      }
+      porAdvogada[colab].total_agendadas++;
+      if (ev.lead_id) porAdvogada[colab].lead_ids.add(ev.lead_id);
+    }
+
+    // Buscar etapa atual dos leads envolvidos
+    const todosLeadIds = [...new Set(Object.values(porAdvogada).flatMap(a => [...a.lead_ids]))];
+    const leadEtapas = {};
+    if (todosLeadIds.length > 0) {
+      const { data: leads } = await db.supabase
+        .from('leads')
+        .select('id, etapa_funil')
+        .in('id', todosLeadIds);
+      for (const l of (leads || [])) leadEtapas[l.id] = l.etapa_funil;
+    }
+
+    for (const [colab, stats] of Object.entries(porAdvogada)) {
+      for (const lid of stats.lead_ids) {
+        const etapa = leadEtapas[lid];
+        if (etapa === 'cliente') stats.fechadas++;
+        else if (etapa === 'documentos') stats.em_documentos++;
+        else if (etapa === 'perdido') stats.perdidas++;
+      }
+      stats.taxa_fechamento = stats.total_agendadas > 0
+        ? (stats.fechadas / stats.total_agendadas * 100).toFixed(1) + '%'
+        : '0%';
+      delete stats.lead_ids;
+    }
+
+    res.json({ periodo: `${dias} dias`, por_advogada: porAdvogada });
+  } catch (e) {
+    console.error('[REL-ADV] Erro:', e.message);
+    res.status(500).json({ error: 'Erro no relatorio por advogada' });
+  }
+});
+
+// ===== MAPA DE HORÁRIOS DE ENGAJAMENTO =====
+// Distribuição de mensagens de leads por hora do dia e dia da semana (Belém)
+app.get('/api/analise/horarios', requireApiKey, async (req, res) => {
+  try {
+    const dias = parseInt(req.query.dias) || 30;
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: msgs } = await db.supabase
+      .from('mensagens')
+      .select('criado_em, role')
+      .eq('role', 'user')
+      .gte('criado_em', desde)
+      .limit(10000);
+
+    const diasSem = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+    const porHora = Array(24).fill(0);
+    const porDiaSemana = Array(7).fill(0);
+    const heatmap = {}; // "dia_hora" => count
+
+    for (const m of (msgs || [])) {
+      // Converter para horário Belém (UTC-3)
+      const belem = new Date(new Date(m.criado_em).toLocaleString('en-US', { timeZone: 'America/Belem' }));
+      const hora = belem.getHours();
+      const dia = belem.getDay();
+      porHora[hora]++;
+      porDiaSemana[dia]++;
+      const chave = `${diasSem[dia]}_${hora}`;
+      heatmap[chave] = (heatmap[chave] || 0) + 1;
+    }
+
+    const melhorHora = porHora.indexOf(Math.max(...porHora));
+    const melhorDia = diasSem[porDiaSemana.indexOf(Math.max(...porDiaSemana))];
+
+    res.json({
+      periodo: `${dias} dias`,
+      total_mensagens: (msgs || []).length,
+      por_hora: porHora,
+      por_dia_semana: Object.fromEntries(diasSem.map((d, i) => [d, porDiaSemana[i]])),
+      heatmap,
+      melhor_hora: melhorHora,
+      melhor_dia: melhorDia
+    });
+  } catch (e) {
+    console.error('[ANALISE-HORARIOS] Erro:', e.message);
+    res.status(500).json({ error: 'Erro na analise de horarios' });
+  }
+});
+
+// ===== MÉTRICAS POR ORIGEM =====
+// Agrupa leads por campo `origem` (Instagram, Google, WhatsApp direto, indicação, etc.)
+app.get('/api/analise/origens', requireApiKey, async (req, res) => {
+  try {
+    const dias = parseInt(req.query.dias) || 30;
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: leads } = await db.supabase
+      .from('leads')
+      .select('origem, etapa_funil, score')
+      .eq('escritorio', config.ESCRITORIO)
+      .gte('criado_em', desde);
+
+    const porOrigem = {};
+    for (const l of (leads || [])) {
+      const o = (l.origem || 'sem_origem').trim();
+      if (!porOrigem[o]) {
+        porOrigem[o] = { total: 0, cliente: 0, agendamento: 0, documentos: 0, perdido: 0, score_soma: 0 };
+      }
+      porOrigem[o].total++;
+      porOrigem[o].score_soma += (l.score || 0);
+      if (porOrigem[o][l.etapa_funil] !== undefined) porOrigem[o][l.etapa_funil]++;
+    }
+    for (const o of Object.values(porOrigem)) {
+      o.score_medio = o.total > 0 ? Math.round(o.score_soma / o.total) : 0;
+      o.taxa_cliente = o.total > 0 ? (o.cliente / o.total * 100).toFixed(1) + '%' : '0%';
+      delete o.score_soma;
+    }
+
+    res.json({ periodo: `${dias} dias`, por_origem: porOrigem });
+  } catch (e) {
+    console.error('[ANALISE-ORIGENS] Erro:', e.message);
+    res.status(500).json({ error: 'Erro na analise de origens' });
+  }
+});
+
 // ===== LEADS (endpoints para o funil do CRM) =====
 
 app.get('/api/leads', async (req, res) => {
