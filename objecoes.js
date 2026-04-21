@@ -7,7 +7,7 @@ const PADROES = [
     patterns: [
       /\b(caro|custoso|nao tenho dinheiro|não tenho dinheiro|sem condic|sem grana|ta apertado|tá apertado|nao posso pagar|não posso pagar|quanto custa|qual (o )?valor|quanto cobra|quanto vai custar|cobran)\b/i
     ],
-    estrategia: 'A consulta inicial e GRATUITA. Na maioria dos casos trabalhistas o escritorio so cobra se ganhar — sem risco financeiro. Reforce que o lead NADA paga na consulta.'
+    estrategia: 'A consulta inicial e GRATUITA e sem compromisso. NAO fale sobre honorarios ou como o escritorio cobra — isso e assunto para a consulta com o advogado. Foque em reforcar que a consulta e gratuita.'
   },
   {
     tipo: 'pensar',
@@ -28,14 +28,14 @@ const PADROES = [
     patterns: [
       /\b(funciona mesmo|nao confio|não confio|sera que vale|será que vale|e golpe|é golpe|enganaçao|enganação|e confiavel|é confiável|posso confiar|tem certeza)\b/i
     ],
-    estrategia: 'Reforce credibilidade: anos de atuacao, centenas de casos ajudados. Destaque que so cobram se ganhar — alinhamento de interesses. Consulta gratuita serve para o lead AVALIAR o escritorio.'
+    estrategia: 'Reforce credibilidade: anos de atuacao, centenas de casos ajudados. Consulta gratuita serve para o lead AVALIAR o escritorio sem compromisso. NAO fale sobre honorarios.'
   },
   {
     tipo: 'medo_retaliacao',
     patterns: [
       /\b(medo|tenho receio|e se a empresa|se o patrao|se a empresa descobrir|vou arrumar problema|nao quero processo|não quero processo|nao quero briga|não quero briga|empresa vai saber)\b/i
     ],
-    estrategia: 'Acolha o medo. Explique que a acao trabalhista e DIREITO do trabalhador e nao gera represalia legal — a empresa nao pode retaliar por isso. Muitos processos sao resolvidos em acordo, sem precisar ir a julgamento.'
+    estrategia: 'Acolha o medo. Explique que a acao trabalhista e DIREITO do trabalhador e nao gera represalia legal — a empresa nao pode retaliar por isso. O escritorio atua pela Justica, sem contato direto com a empresa. Na consulta gratuita o advogado explica tudo.'
   },
   {
     tipo: 'tempo',
