@@ -164,14 +164,16 @@ setInterval(() => {
 // ===== CONTROLE DE AGENDAMENTO ÚNICO POR CONVERSA =====
 // Evita que a Laura agende 2 consultas pro mesmo lead
 // Persiste via métricas no banco para sobreviver a deploys
+// + Lock em memória para evitar race condition entre processamentos paralelos
+const agendamentoLock = new Set(); // phones em processo de agendamento
 
 async function verificarJaAgendou(phone) {
   try {
     const { cleanPhone } = require('./whatsapp');
     const tel = cleanPhone(phone);
 
-    // 1. Verificar no banco (métricas)
-    const limite = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    // 1. Verificar no banco (métricas) — janela de 30 dias para cobrir consultas futuras
+    const limite = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const { data } = await db.supabase
       .from('metricas')
       .select('conversa_id, detalhes, criado_em')
@@ -203,7 +205,9 @@ async function verificarJaAgendou(phone) {
           console.log(`[AGENDAMENTO-NPL] Consulta encontrada no Calendar: ${eventoExistente.summary}`);
           return { data: eventoExistente.summary, timestamp: eventoExistente.inicio };
         }
-      } catch (e) {}
+      } catch (e) {
+        console.log(`[AGENDAMENTO-NPL] Calendar fallback falhou (continuando com cautela): ${e.message}`);
+      }
     }
 
     return null;
@@ -472,14 +476,20 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
     const eReferencia = /(já está|ja esta|desculpa|confusão|confusao|verificar|vou buscar|tem certeza|quer mudar|quer mesmo|precisa mudar)/i.test(replyLower);
     const agendouConsulta = temConfirmacao && temDia && temHora && !eReferencia && !temBloqueio;
     if (calendar && agendouConsulta) {
+      // Lock anti-race-condition: se já tem outro processamento agendando pra esse phone, aborta
+      const cleanP = whatsapp.cleanPhone(phone);
+      if (agendamentoLock.has(cleanP)) {
+        console.log(`[CALENDAR-NPL] LOCK: outro agendamento em andamento para ${phone}, ignorando`);
+      } else {
+      agendamentoLock.add(cleanP);
+      try {
       // Verificar se já agendou
       const agendamentoExistente = await verificarJaAgendou(phone);
 
-      // Detectar remarcação: palavras explícitas OU (tem agendamento + lead mencionou outra data)
+      // Detectar remarcação: somente palavras EXPLÍCITAS de mudança (não "pode ser"/"bora" que são confirmação)
       const allTextLower = (history || []).slice(-6).map(m => m.content).join(' ').toLowerCase() + ' ' + combinedText.toLowerCase();
-      const remarcacaoExplicita = /(remarc|mudar|trocar|cancelar|adiar|nao vou poder|não vou poder|outro dia|outro horario|outro horário|posso mudar|posso trocar|pode ser outro|tem outro)/.test(allTextLower);
-      const leadMudouData = agendamentoExistente && /(pode ser|prefiro|quero|melhor|bora|vamos|segunda|terça|terca|quarta|quinta|sexta|amanhã|amanha)/.test(combinedText.toLowerCase());
-      const eRemarcacao = remarcacaoExplicita || leadMudouData;
+      const remarcacaoExplicita = /(remarc|mudar hor|mudar a consult|trocar hor|trocar a consult|cancelar|adiar|nao vou poder|não vou poder|outro dia|outro hor[aá]rio|posso mudar|posso trocar|pode ser outro dia|tem outro hor)/.test(allTextLower);
+      const eRemarcacao = remarcacaoExplicita;
 
       if (agendamentoExistente && !eRemarcacao) {
         console.log(`[CALENDAR-NPL] BLOQUEADO: ${phone} ja agendou recentemente (${agendamentoExistente.data})`);
@@ -609,6 +619,10 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
         console.log('[CALENDAR-NPL] Erro ao criar evento no agendamento:', e.message);
       }
       } // fecha else do verificarJaAgendou
+      } finally {
+        agendamentoLock.delete(cleanP);
+      }
+      } // fecha else do agendamentoLock
     }
 
     // Enviar resposta — áudio só se o lead mandou áudio
