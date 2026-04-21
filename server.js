@@ -520,7 +520,17 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       try {
         // Buscar slot usando a RESPOSTA DA LAURA (que tem o horário confirmado)
         // e o texto do lead como fallback
-        const slot = await calendar.encontrarSlot(reply, phone) || await calendar.encontrarSlot(combinedText, phone);
+        let slot = await calendar.encontrarSlot(reply, phone) || await calendar.encontrarSlot(combinedText, phone);
+        // Fallback: se encontrarSlot falhou (slot fora da lista viva, race condition,
+        // Laura usou hora fora das 3 oferecidas), construir slot direto do texto da
+        // confirmacao. criarConsulta faz checagem de conflito no slot exato, entao
+        // nao ha risco de double-booking.
+        if (!slot) {
+          slot = calendar.construirSlotDeTexto(reply) || calendar.construirSlotDeTexto(combinedText);
+          if (slot) {
+            console.log(`[CALENDAR-NPL] Fallback acionado para ${phone}: slot construido de "${reply.slice(0, 80)}"`);
+          }
+        }
         if (slot) {
           const nome = lead?.nome || 'Lead';
           const email = lead?.email || null;

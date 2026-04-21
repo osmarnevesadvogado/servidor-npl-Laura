@@ -443,6 +443,29 @@ async function criarConsulta(nome, telefone, email, dataHora, formato = 'online'
     const fim = new Date(inicio);
     fim.setMinutes(fim.getMinutes() + DURACAO_CONSULTA);
 
+    // Checagem de conflito no slot exato — previne double-booking quando
+    // o fallback construirSlotDeTexto for acionado (slot sem passar por
+    // getHorariosDisponiveis pode estar ocupado na realidade).
+    try {
+      const conflictResp = await calendar.events.list({
+        calendarId: CALENDAR_ID,
+        timeMin: inicio.toISOString(),
+        timeMax: fim.toISOString(),
+        singleEvents: true,
+        timeZone: TIMEZONE
+      });
+      const conflitos = (conflictResp.data.items || []).filter(ev =>
+        (ev.summary || '').includes('Consulta Trabalhista')
+      );
+      if (conflitos.length > 0) {
+        console.log(`[CALENDAR-NPL] CONFLITO no slot ${inicio.toISOString()} — abortando insert (${conflitos.length} evento(s) existente(s))`);
+        return null;
+      }
+    } catch (e) {
+      console.log('[CALENDAR-NPL] Erro ao checar conflito:', e.message);
+      // Prossegue mesmo com erro na checagem (fail-open para nao bloquear agendamento por transient)
+    }
+
     // Buscar eventos do período para determinar rodízio
     const timeMin = new Date(inicio.getTime() - 7 * 24 * 60 * 60 * 1000);
     const timeMax = new Date(inicio.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -638,6 +661,110 @@ async function encontrarSlot(texto, phoneAtual = null) {
   }
 
   return melhor;
+}
+
+// ===== FALLBACK: CONSTRUIR SLOT DIRETO DO TEXTO =====
+// Usado quando encontrarSlot falha por qualquer motivo (slot fora da lista viva,
+// lag do Google Calendar, reserva de outra conversa, Laura gerando hora fora dos
+// 3 slots oferecidos). Se a Laura confirmou dia+hora especificos, confiamos e
+// deixamos o insert real no Google Calendar detectar conflito (checagem em criarConsulta).
+function construirSlotDeTexto(texto) {
+  if (!texto) return null;
+  const lower = texto.toLowerCase();
+
+  const diasSemana = {
+    'segunda': 1, 'terça': 2, 'terca': 2, 'quarta': 3, 'quinta': 4, 'sexta': 5,
+    'seg': 1, 'ter': 2, 'qua': 3, 'qui': 4, 'sex': 5
+  };
+
+  let diaSemanaAlvo = null;
+  for (const [nome, num] of Object.entries(diasSemana)) {
+    if (lower.includes(nome)) { diaSemanaAlvo = num; break; }
+  }
+
+  const belemAgora = agoraBelem();
+  let dataExplicita = null;
+
+  const matchData = lower.match(/(\d{1,2})\/(\d{1,2})/);
+  if (matchData) {
+    const dia = parseInt(matchData[1]);
+    const mes = parseInt(matchData[2]) - 1;
+    const ano = belemAgora.getUTCFullYear();
+    dataExplicita = { ano, mes, dia };
+  }
+
+  if (!dataExplicita && (lower.includes('amanhã') || lower.includes('amanha'))) {
+    const t = new Date(belemAgora);
+    t.setUTCDate(t.getUTCDate() + 1);
+    dataExplicita = { ano: t.getUTCFullYear(), mes: t.getUTCMonth(), dia: t.getUTCDate() };
+    diaSemanaAlvo = t.getUTCDay();
+  }
+
+  if (!dataExplicita && lower.includes('hoje')) {
+    dataExplicita = { ano: belemAgora.getUTCFullYear(), mes: belemAgora.getUTCMonth(), dia: belemAgora.getUTCDate() };
+    diaSemanaAlvo = belemAgora.getUTCDay();
+  }
+
+  if (!dataExplicita && diaSemanaAlvo !== null) {
+    const t = new Date(belemAgora);
+    const hoje = t.getUTCDay();
+    let delta = (diaSemanaAlvo - hoje + 7) % 7;
+    if (delta === 0) delta = 7; // proxima ocorrencia, nao hoje
+    t.setUTCDate(t.getUTCDate() + delta);
+    dataExplicita = { ano: t.getUTCFullYear(), mes: t.getUTCMonth(), dia: t.getUTCDate() };
+  }
+
+  if (!dataExplicita) {
+    console.log('[CALENDAR-NPL] construirSlotDeTexto: sem dia identificado');
+    return null;
+  }
+
+  let hora = null;
+  const horaMatch = lower.match(/(\d{1,2})\s*(?:h|hrs?|horas?)/);
+  if (horaMatch) hora = parseInt(horaMatch[1]);
+  if (hora === null) {
+    const asMatch = lower.match(/[àa]s\s+(\d{1,2})/);
+    if (asMatch) hora = parseInt(asMatch[1]);
+  }
+  if (hora === null) {
+    console.log('[CALENDAR-NPL] construirSlotDeTexto: sem hora identificada');
+    return null;
+  }
+
+  const horasValidas = getHorasDoDia();
+  if (!horasValidas.includes(hora)) {
+    console.log(`[CALENDAR-NPL] construirSlotDeTexto: hora ${hora}h fora dos horarios validos`);
+    return null;
+  }
+
+  const inicio = criarDataBelem(dataExplicita.ano, dataExplicita.mes, dataExplicita.dia, hora, 0);
+  const fim = new Date(inicio.getTime() + DURACAO_CONSULTA * 60 * 1000);
+
+  if (inicio <= new Date()) {
+    console.log('[CALENDAR-NPL] construirSlotDeTexto: slot no passado');
+    return null;
+  }
+
+  const belemSlot = new Date(inicio.getTime() + (UTC_OFFSET * 60 * 60 * 1000));
+  const diaSemanaSlot = belemSlot.getUTCDay();
+  if (diaSemanaSlot === 0 || diaSemanaSlot === 6) {
+    console.log('[CALENDAR-NPL] construirSlotDeTexto: fim de semana');
+    return null;
+  }
+
+  if (isFeriado(dataExplicita.ano, dataExplicita.mes, dataExplicita.dia)) {
+    console.log('[CALENDAR-NPL] construirSlotDeTexto: feriado');
+    return null;
+  }
+
+  const label = formatarSlot(hora, {
+    ano: dataExplicita.ano,
+    mes: dataExplicita.mes,
+    dia: dataExplicita.dia,
+    diaSemana: diaSemanaSlot
+  });
+  console.log(`[CALENDAR-NPL] construirSlotDeTexto: ${label} (${inicio.toISOString()})`);
+  return { inicio, fim, label };
 }
 
 // ===== BUSCAR CONSULTAS DO DIA (para lembretes) =====
@@ -837,6 +964,7 @@ module.exports = {
   buscarConsultaPorTelefone,
   cancelarConsulta,
   encontrarSlot,
+  construirSlotDeTexto,
   getConsultasDoDia,
   getConsultas,
   formatarSlot: formatarSlotDate,
