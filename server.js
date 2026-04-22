@@ -1244,6 +1244,9 @@ app.post('/webhook/zapi', async (req, res) => {
     // Detectar qual instância (escritório ou prospecção)
     const instancia = whatsapp.detectarInstancia(body);
 
+    // DEBUG temporário: logar todo webhook pra diagnosticar fromMe
+    console.log(`[WEBHOOK-DEBUG] type=${body.type} fromMe=${isFromMe} phone=${body.phone || body.from || body.to || '-'} instancia=${instancia} hasText=${!!(body.text?.message || body.body)}`);
+
     // Ignorar grupos, listas de transmissão e números não-brasileiros
     const rawPhone = body.phone || body.from || body.to || '';
     if (rawPhone.includes('@lid') || rawPhone.includes('@g.us') || rawPhone.includes('@broadcast')) {
