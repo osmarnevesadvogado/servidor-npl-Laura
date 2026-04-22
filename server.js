@@ -2757,9 +2757,9 @@ async function syncDatacrazy() {
 }
 
 if (config.DATACRAZY_API_TOKEN) {
-  const intervalo = (config.DATACRAZY_SYNC_INTERVAL || 3) * 60 * 1000;
-  setInterval(syncDatacrazy, intervalo);
-  console.log(`[DATACRAZY-SYNC] Ativo — polling a cada ${config.DATACRAZY_SYNC_INTERVAL || 3} min`);
+  const intervaloSecs = config.DATACRAZY_SYNC_INTERVAL_SECS || 30;
+  setInterval(syncDatacrazy, intervaloSecs * 1000);
+  console.log(`[DATACRAZY-SYNC] Ativo — polling a cada ${intervaloSecs}s`);
 }
 
 // ===== INICIAR =====
