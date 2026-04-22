@@ -90,7 +90,7 @@ module.exports = {
 
   // Datacrazy (sincronização de mensagens da equipe)
   DATACRAZY_API_TOKEN: process.env.DATACRAZY_API_TOKEN || null,
-  DATACRAZY_SYNC_INTERVAL_SECS: parseInt(process.env.DATACRAZY_SYNC_INTERVAL_SECS) || 30, // segundos
+  DATACRAZY_SYNC_INTERVAL_SECS: parseInt(process.env.DATACRAZY_SYNC_INTERVAL_SECS) || 5, // segundos
 
   // Servidor
   PORT: process.env.PORT || 3000,
