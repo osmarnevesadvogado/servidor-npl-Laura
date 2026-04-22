@@ -174,6 +174,40 @@ setInterval(() => {
 // + Lock em memória para evitar race condition entre processamentos paralelos
 const agendamentoLock = new Set(); // phones em processo de agendamento
 
+// ===== CACHE @lid -> telefone (WhatsApp Multi-Device) =====
+// Quando a equipe manda msg pelo celular/Datacrazy (device vinculado),
+// a Z-API mascara o telefone do destinatario como @lid. Mantemos este
+// cache populado a partir de webhooks que tem telefone limpo + chatLid.
+const lidPhoneMap = new Map();
+
+// Tenta resolver @lid -> telefone usando cache ou buscando por nome nas conversas
+async function resolverLidParaPhone(chatLid, chatName) {
+  if (!chatLid) return null;
+  // 1. Cache
+  const cacheado = lidPhoneMap.get(chatLid);
+  if (cacheado) return cacheado;
+  // 2. Match por chatName no banco
+  if (chatName && chatName.trim().length > 2) {
+    try {
+      const nomeLimpo = chatName.replace(/[\u{1F300}-\u{1FAF8}\u{2600}-\u{27BF}]/gu, '').trim();
+      const { data } = await db.supabase
+        .from('conversas')
+        .select('telefone, titulo')
+        .eq('escritorio', config.ESCRITORIO)
+        .or(`titulo.ilike.%${nomeLimpo}%,telefone.ilike.%${nomeLimpo}%`)
+        .limit(5);
+      if (data && data.length === 1 && data[0].telefone) {
+        lidPhoneMap.set(chatLid, data[0].telefone);
+        console.log(`[LID-MAP] Resolvido por nome: ${chatLid} -> ${data[0].telefone} (${chatName})`);
+        return data[0].telefone;
+      }
+    } catch (e) {
+      console.log('[LID-MAP] Erro match por nome:', e.message);
+    }
+  }
+  return null;
+}
+
 async function verificarJaAgendou(phone) {
   try {
     const { cleanPhone } = require('./whatsapp');
@@ -1240,29 +1274,37 @@ app.post('/webhook/zapi', async (req, res) => {
     const messageId = body.messageId || body.ids?.[0]?.serialized || body.id?.id || '';
     const isMessage = body.type === 'ReceivedCallback' || body.text?.message;
     const isFromMe = body.fromMe || body.isFromMe;
+    const chatLid = body.chatLid || null;
+    const chatName = body.chatName || '';
 
     // Detectar qual instância (escritório ou prospecção)
     const instancia = whatsapp.detectarInstancia(body);
 
-    // Quando fromMe=true via Multi-Device, o "phone" pode vir como @lid do dispositivo vinculado.
-    // Nesse caso precisamos buscar o telefone do destinatário em outros campos (chatId, to, chat, etc).
-    if (isFromMe) {
-      // Logar payload completo 1x pra entender o formato
-      console.log(`[FROMME-DEBUG] body=${JSON.stringify(body).slice(0, 600)}`);
+    // Popular cache @lid -> telefone sempre que tivermos ambos
+    const rawPhoneParaMap = body.phone || body.from || body.to || '';
+    const limpoParaMap = String(rawPhoneParaMap).replace('@c.us', '').replace('@s.whatsapp.net', '');
+    if (chatLid && limpoParaMap && !limpoParaMap.includes('@') && /^\d{10,15}$/.test(limpoParaMap)) {
+      if (lidPhoneMap.get(chatLid) !== limpoParaMap) {
+        lidPhoneMap.set(chatLid, limpoParaMap);
+        console.log(`[LID-MAP] ${chatLid} -> ${limpoParaMap} (${chatName})`);
+      }
     }
 
-    // Ignorar grupos e listas de transmissão (mas permitir @lid em fromMe — é id de device vinculado)
+    // Ignorar grupos e listas de transmissão
     const rawPhone = body.phone || body.from || body.to || '';
     if (rawPhone.includes('@g.us') || rawPhone.includes('@broadcast')) {
       return res.json({ status: 'group_ignored' });
     }
+    // @lid sem fromMe ignora (mensagem anônima recebida, não tratamos)
     if (rawPhone.includes('@lid') && !isFromMe) {
       return res.json({ status: 'lid_ignored' });
     }
-    // Ignorar números internacionais (não começam com 55)
-    const phoneDigits = rawPhone.replace(/\D/g, '').replace(/@.*/, '');
-    if (phoneDigits.length > 0 && !phoneDigits.startsWith('55') && phoneDigits.length > 11) {
-      return res.json({ status: 'international_ignored' });
+    // Ignorar números internacionais — pula se for @lid (resolvemos depois no bloco fromMe)
+    if (!rawPhone.includes('@lid')) {
+      const phoneDigits = rawPhone.replace(/\D/g, '').replace(/@.*/, '');
+      if (phoneDigits.length > 0 && !phoneDigits.startsWith('55') && phoneDigits.length > 11) {
+        return res.json({ status: 'international_ignored' });
+      }
     }
 
     // Número 01 (escritório): Laura silenciosa durante horário comercial
@@ -1281,28 +1323,26 @@ app.post('/webhook/zapi', async (req, res) => {
     }
 
     if (isFromMe) {
-      // Extrair telefone do destinatário (vários formatos possíveis quando vem de device vinculado)
-      const candidatos = [
-        body.to,
-        body.chatId,
-        body.chat,
-        body.phone,
-        body.from,
-        body.recipient
-      ];
+      // Extrair telefone do destinatário. Multi-Device mascara como @lid.
+      const candidatos = [body.to, body.chatId, body.chat, body.phone, body.from, body.recipient];
       let phone = '';
       for (const c of candidatos) {
         if (!c) continue;
         const limpo = String(c).replace('@c.us', '').replace('@s.whatsapp.net', '');
-        // Só aceita se for número puro (ou com @c.us), não @lid nem @g.us
         if (!limpo.includes('@') && /^\d{10,15}$/.test(limpo)) {
           phone = limpo;
           break;
         }
       }
+
+      // Se todos vieram como @lid, tentar resolver via cache/nome
+      if (!phone && chatLid) {
+        phone = await resolverLidParaPhone(chatLid, chatName);
+      }
+
       if (!phone) {
-        console.log(`[MANUAL-NPL] fromMe sem phone resolvivel — body keys: ${Object.keys(body).join(',')}`);
-        return res.json({ status: 'fromme_no_phone' });
+        console.log(`[MANUAL-NPL] fromMe nao resolveu telefone: chatLid=${chatLid} chatName="${chatName}" — ignorando`);
+        return res.json({ status: 'fromme_lid_unresolved' });
       }
 
       // Fast path: servidor/Laura acabou de enviar (60s) — ignorar echo
