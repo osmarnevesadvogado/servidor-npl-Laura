@@ -2654,6 +2654,114 @@ app.post('/api/chat', requireApiKey, async (req, res) => {
   }
 });
 
+// ===== SYNC DATACRAZY → CRM =====
+// Polling periódico: busca mensagens enviadas pela equipe no Datacrazy
+// e salva no nosso banco para que apareçam no CRM
+const datacrazySyncState = {
+  lastSync: new Date().toISOString(), // só sincroniza daqui pra frente
+  running: false
+};
+
+async function syncDatacrazy() {
+  if (!config.DATACRAZY_API_TOKEN || datacrazySyncState.running) return;
+  datacrazySyncState.running = true;
+
+  try {
+    const since = datacrazySyncState.lastSync;
+    const agora = new Date().toISOString();
+    const headers = {
+      'Authorization': `Bearer ${config.DATACRAZY_API_TOKEN}`,
+      'Content-Type': 'application/json'
+    };
+
+    // Buscar conversas atualizadas desde último sync
+    const convResp = await fetch(
+      `https://api.g1.datacrazy.io/api/v1/conversations?take=50&filter[updatedAt][$gte]=${encodeURIComponent(since)}`,
+      { headers, signal: AbortSignal.timeout(15000) }
+    );
+    if (!convResp.ok) {
+      console.log(`[DATACRAZY-SYNC] Erro ao buscar conversas: ${convResp.status}`);
+      return;
+    }
+    const convData = await convResp.json();
+    const conversas = convData.data || [];
+
+    if (conversas.length === 0) {
+      datacrazySyncState.lastSync = agora;
+      return;
+    }
+
+    let totalSalvas = 0;
+
+    for (const conv of conversas) {
+      const phone = conv.contact?.phoneNumber || conv.contact?.contactId;
+      if (!phone || !/^\d{10,15}$/.test(phone)) continue;
+
+      // Buscar mensagens da conversa
+      const msgResp = await fetch(
+        `https://api.g1.datacrazy.io/api/v1/conversations/${conv.id}/messages?take=20`,
+        { headers, signal: AbortSignal.timeout(15000) }
+      );
+      if (!msgResp.ok) continue;
+      const msgData = await msgResp.json();
+      const mensagens = msgData.messages || msgData.data || [];
+
+      // Filtrar: só msgs ENVIADAS pela equipe (received=false), depois do último sync
+      const novas = mensagens.filter(m =>
+        !m.received &&
+        !m.isInternal &&
+        m.body &&
+        m.body.trim().length > 0 &&
+        new Date(m.createdAt) > new Date(since)
+      );
+
+      if (novas.length === 0) continue;
+
+      // Buscar/criar conversa e lead no nosso banco
+      const conversa = await db.getOrCreateConversa(phone);
+      await db.getOrCreateLead(phone, conv.name || null);
+
+      for (const msg of novas) {
+        // Dedup: checar se já existe mensagem com mesmo conteúdo em ±60s
+        const msgTime = new Date(msg.createdAt);
+        const { data: dup } = await db.supabase
+          .from('mensagens')
+          .select('id')
+          .eq('conversa_id', conversa.id)
+          .eq('content', msg.body)
+          .gte('criado_em', new Date(msgTime.getTime() - 60000).toISOString())
+          .lte('criado_em', new Date(msgTime.getTime() + 60000).toISOString())
+          .limit(1);
+
+        if (dup && dup.length > 0) continue;
+
+        const attendantName = msg.attendant?.name || 'Equipe (Datacrazy)';
+        await db.saveMessage(conversa.id, 'assistant', msg.body, {
+          manual: true,
+          usuario_nome: attendantName,
+          criado_em: msg.createdAt
+        });
+        totalSalvas++;
+      }
+    }
+
+    datacrazySyncState.lastSync = agora;
+    if (totalSalvas > 0) {
+      console.log(`[DATACRAZY-SYNC] ${totalSalvas} msg(s) sincronizada(s) de ${conversas.length} conversa(s)`);
+    }
+  } catch (e) {
+    console.log(`[DATACRAZY-SYNC] Erro: ${e.message}`);
+  } finally {
+    datacrazySyncState.running = false;
+  }
+}
+
+if (config.DATACRAZY_API_TOKEN) {
+  const intervalo = (config.DATACRAZY_SYNC_INTERVAL || 3) * 60 * 1000;
+  setInterval(syncDatacrazy, intervalo);
+  console.log(`[DATACRAZY-SYNC] Ativo — polling a cada ${config.DATACRAZY_SYNC_INTERVAL || 3} min`);
+}
+
 // ===== INICIAR =====
 app.listen(config.PORT, () => {
   console.log('');

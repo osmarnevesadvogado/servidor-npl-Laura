@@ -88,6 +88,10 @@ module.exports = {
   // Origens permitidas para CORS (separadas por vírgula)
   ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS || null,
 
+  // Datacrazy (sincronização de mensagens da equipe)
+  DATACRAZY_API_TOKEN: process.env.DATACRAZY_API_TOKEN || null,
+  DATACRAZY_SYNC_INTERVAL: parseInt(process.env.DATACRAZY_SYNC_INTERVAL) || 3, // minutos
+
   // Servidor
   PORT: process.env.PORT || 3000,
   RENDER_URL: process.env.RENDER_EXTERNAL_URL
