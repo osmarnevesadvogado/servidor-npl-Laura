@@ -2674,13 +2674,13 @@ async function syncDatacrazy() {
       'Content-Type': 'application/json'
     };
 
-    // Buscar conversas atualizadas desde último sync
+    // Buscar só conversas com mensagem enviada (pela equipe) desde último sync
     const convResp = await fetch(
-      `https://api.g1.datacrazy.io/api/v1/conversations?take=50&filter[updatedAt][$gte]=${encodeURIComponent(since)}`,
-      { headers, signal: AbortSignal.timeout(15000) }
+      `https://api.g1.datacrazy.io/api/v1/conversations?take=10&filter[lastSendedMessageDate][$gte]=${encodeURIComponent(since)}`,
+      { headers, signal: AbortSignal.timeout(10000) }
     );
     if (!convResp.ok) {
-      console.log(`[DATACRAZY-SYNC] Erro ao buscar conversas: ${convResp.status}`);
+      if (convResp.status === 429) console.log('[DATACRAZY-SYNC] Rate limited — aguardando');
       return;
     }
     const convData = await convResp.json();
@@ -2697,16 +2697,15 @@ async function syncDatacrazy() {
       const phone = conv.contact?.phoneNumber || conv.contact?.contactId;
       if (!phone || !/^\d{10,15}$/.test(phone)) continue;
 
-      // Buscar mensagens da conversa
+      // Buscar só últimas 5 mensagens (suficiente pra pegar as novas)
       const msgResp = await fetch(
-        `https://api.g1.datacrazy.io/api/v1/conversations/${conv.id}/messages?take=20`,
-        { headers, signal: AbortSignal.timeout(15000) }
+        `https://api.g1.datacrazy.io/api/v1/conversations/${conv.id}/messages?take=5`,
+        { headers, signal: AbortSignal.timeout(10000) }
       );
       if (!msgResp.ok) continue;
       const msgData = await msgResp.json();
       const mensagens = msgData.messages || msgData.data || [];
 
-      // Filtrar: só msgs ENVIADAS pela equipe (received=false), depois do último sync
       const novas = mensagens.filter(m =>
         !m.received &&
         !m.isInternal &&
@@ -2717,12 +2716,10 @@ async function syncDatacrazy() {
 
       if (novas.length === 0) continue;
 
-      // Buscar/criar conversa e lead no nosso banco
       const conversa = await db.getOrCreateConversa(phone);
       await db.getOrCreateLead(phone, conv.name || null);
 
       for (const msg of novas) {
-        // Dedup: checar se já existe mensagem com mesmo conteúdo em ±60s
         const msgTime = new Date(msg.createdAt);
         const { data: dup } = await db.supabase
           .from('mensagens')
@@ -2750,6 +2747,7 @@ async function syncDatacrazy() {
       console.log(`[DATACRAZY-SYNC] ${totalSalvas} msg(s) sincronizada(s) de ${conversas.length} conversa(s)`);
     }
   } catch (e) {
+    if (e.name === 'TimeoutError' || e.message?.includes('timeout')) return; // silencioso
     console.log(`[DATACRAZY-SYNC] Erro: ${e.message}`);
   } finally {
     datacrazySyncState.running = false;
