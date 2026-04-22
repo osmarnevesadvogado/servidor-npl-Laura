@@ -17,24 +17,25 @@ function cleanPhone(phone) {
 function limparNomeContato(nome) {
   if (!nome) return '';
   let limpo = nome.trim();
-  // Se é handle de rede social (@usuario) ou email, ignorar
-  if (limpo.startsWith('@') || limpo.includes('@') || /^[a-z0-9._]+$/i.test(limpo)) return '';
-  // Se é só emojis, ignorar
-  if (/^[\u{1F300}-\u{1FAF8}\u{2600}-\u{27BF}\s]+$/u.test(limpo)) return '';
-  // Palavras que indicam que NÃO é apenas nome (vem com cargo/empresa)
-  const palavrasNaoNome = /(time|equipe|setor|comercial|corporativo|tecnico|técnico|vendas|empresa|escritorio|escritório|do |da |de |dos |das )/i;
+  if (limpo.startsWith('@') || limpo.includes('@')) return '';
+  // Remover emojis (manter texto)
+  limpo = limpo.replace(/[\u{1F300}-\u{1FAF8}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{200D}\u{20E3}\u{E0020}-\u{E007F}\u{2700}-\u{27BF}\u{2300}-\u{23FF}#\*]/gu, '').trim();
+  if (!limpo || limpo.length < 2) return '';
+  // Se é só números/pontos/underscores sem nome real, ignorar
+  if (/^[a-z0-9._]+$/i.test(limpo) && !/[A-ZÀ-Ú][a-zà-ú]{2,}/.test(limpo)) return '';
+  // Palavras de cargo/empresa — extrair só o nome
+  const palavrasNaoNome = /(time|equipe|setor|comercial|corporativo|tecnico|técnico|vendas|empresa|escritorio|escritório|sociedade|advogad)/i;
   if (!palavrasNaoNome.test(limpo)) return limpo;
-  // Tem palavras de cargo — extrair só o nome próprio do começo
   const palavras = limpo.split(/\s+/);
   const nomeProprio = [];
   for (const p of palavras) {
-    // Para na primeira palavra minúscula ou palavra-cargo
-    if (/^[a-záéíóúâêîôûãõç]/.test(p)) break;
+    if (/^(de|da|do|dos|das)$/i.test(p)) { nomeProprio.push(p); continue; }
+    if (/^[a-záéíóúâêîôûãõç]/.test(p) && nomeProprio.length > 0) break;
     if (palavrasNaoNome.test(p)) break;
     nomeProprio.push(p);
-    if (nomeProprio.length >= 3) break;
+    if (nomeProprio.length >= 4) break;
   }
-  return nomeProprio.length > 0 ? nomeProprio.join(' ') : limpo.split(' ')[0];
+  return nomeProprio.length > 0 ? nomeProprio.join(' ') : '';
 }
 
 // Retorna base URL e client token da instância correta

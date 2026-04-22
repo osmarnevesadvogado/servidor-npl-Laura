@@ -319,11 +319,12 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       // Sincronizar titulo da conversa se o nome do lead mudou
       try {
         const leadAtualizado = await db.supabase.from('leads').select('nome').eq('id', lead.id).maybeSingle();
-        if (leadAtualizado?.data?.nome && conversa.titulo !== leadAtualizado.data.nome) {
-          const nomeNovo = leadAtualizado.data.nome;
+        const nomeNovo = leadAtualizado?.data?.nome;
+        if (nomeNovo && nomeNovo !== conversa.titulo) {
           const tituloAtual = conversa.titulo || '';
-          const ehFallback = !tituloAtual || tituloAtual.startsWith('WhatsApp') || /^\+?\(?\d/.test(tituloAtual);
-          if (ehFallback) {
+          const nomeEhReal = nomeNovo.length > 2 && !/^\+?\(?\d/.test(nomeNovo) && !nomeNovo.startsWith('WhatsApp');
+          const tituloEhFallback = !tituloAtual || tituloAtual.startsWith('WhatsApp') || /^\+?\(?\d/.test(tituloAtual);
+          if (nomeEhReal && tituloEhFallback) {
             await db.updateConversa(conversa.id, { titulo: nomeNovo });
           }
         }

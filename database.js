@@ -159,12 +159,15 @@ async function extractAndUpdateLead(leadId, text) {
   const nomeEhFallback = !nomeAtual || nomeAtual.startsWith('WhatsApp') || /^\+?\(?\d/.test(nomeAtual) || /^\(\d{2}\)\s?\d/.test(nomeAtual);
   if (nomeEhFallback) {
     const nomePatterns = [
-      /(?:me chamo|meu nome é|sou o |sou a |pode me chamar de )\s*([A-ZÀ-Ú][a-zà-ú]+(?: [A-ZÀ-Ú][a-zà-ú]+){0,3})/i,
-      /(?:^|\n)([A-ZÀ-Ú][a-zà-ú]+ [A-ZÀ-Ú][a-zà-ú]+)(?:\s*$)/m
+      /(?:me chamo|meu nome [eé]|pode me chamar de|meu nome)\s+([A-ZÀ-Úa-zà-ú][a-zà-ú]+(?: (?:de |da |do |dos |das )?[A-ZÀ-Úa-zà-ú][a-zà-ú]+){0,4})/i,
+      /\b(?:sou o |sou a |sou )\s*([A-ZÀ-Ú][a-zà-ú]+(?: (?:de |da |do |dos |das )?[A-ZÀ-Úa-zà-ú][a-zà-ú]+){0,4})/i,
+      /(?:^|\n)\s*([A-ZÀ-Ú][a-zà-ú]+(?: (?:de |da |do |dos |das )?[A-ZÀ-Ú][a-zà-ú]+){1,4})\s*(?:\n|$)/m,
+      /(?:^|\n)\s*([A-ZÀ-Ú][a-zà-ú]{2,15})\s*(?:\n|$)/m
     ];
+    const palavrasComuns = /^(sim|nao|não|oi|ola|olá|bom|boa|ok|obrigad|tudo|bem|dia|noite|tarde|quero|tenho|preciso|pode|certo|isso|aqui|agora|trabalhei|trabalho|meu|minha|fui|era|estou|estive)$/i;
     for (const pattern of nomePatterns) {
       const match = text.match(pattern);
-      if (match && match[1].length > 3 && match[1].length < 50) {
+      if (match && match[1].length >= 3 && match[1].length < 50 && !palavrasComuns.test(match[1].split(' ')[0])) {
         updates.nome = match[1].trim();
         break;
       }
