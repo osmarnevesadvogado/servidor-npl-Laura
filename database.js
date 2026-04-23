@@ -153,30 +153,35 @@ async function extractAndUpdateLead(leadId, text) {
   const emailMatch = text.match(/[\w.-]+@[\w.-]+\.\w{2,}/);
   if (emailMatch) updates.email = emailMatch[0];
 
-  // Nome — só extrai se o lead ainda não tem nome real (evita sobrescrever edição manual do CRM)
-  const { data: leadAtualNome } = await supabase.from('leads').select('nome').eq('id', leadId).maybeSingle();
+  // Nome — extrai da mensagem e decide se atualiza
+  const { data: leadAtualNome } = await supabase.from('leads').select('nome, atualizado_em').eq('id', leadId).maybeSingle();
   const nomeAtual = leadAtualNome?.nome || '';
   const nomeEhFallback = !nomeAtual || nomeAtual.startsWith('WhatsApp') || /^\+?\(?\d/.test(nomeAtual) || /^\(\d{2}\)\s?\d/.test(nomeAtual);
-  if (nomeEhFallback) {
-    const nomePatterns = [
-      /(?:me chamo|meu nome [eé]|pode me chamar de|meu nome)\s+([A-ZÀ-Úa-zà-ú][a-zà-ú]+(?: (?:de |da |do |dos |das )?[A-ZÀ-Úa-zà-ú][a-zà-ú]+){0,4})/i,
-      /\b(?:sou o |sou a |sou )\s*([A-ZÀ-Ú][a-zà-ú]+(?: (?:de |da |do |dos |das )?[A-ZÀ-Úa-zà-ú][a-zà-ú]+){0,4})/i,
-      /(?:^|\n)\s*([A-ZÀ-Ú][a-zà-ú]+(?: (?:de |da |do |dos |das )?[A-ZÀ-Ú][a-zà-ú]+){1,4})\s*(?:\n|$)/m,
-      /(?:^|\n)\s*([A-ZÀ-Ú][a-zà-ú]{2,15})\s*(?:\n|$)/m
-    ];
-    const palavrasComuns = /^(sim|nao|não|oi|ola|olá|bom|boa|ok|obrigad|tudo|bem|dia|noite|tarde|quero|tenho|preciso|pode|certo|isso|aqui|agora|trabalhei|trabalho|meu|minha|fui|era|estou|estive|muito|pouco|talvez|quase|sempre|nunca|prezada|prezado|doutor|doutora|senhor|senhora|bel|salve|oie|pessoal|galera|gente|atenciosamente|cordialmente|obrigada|desculpa|desculpe|entendi|entendo|claro|perfeito|beleza|blz|show)$/i;
-    // Lista de primeiros nomes suspeitos de serem verbos em forma conjugada
-    const verbosForma = /^(recebi|mandei|trouxe|vi|vou|vai|vem|faço|faz|fez|saiu|sai|entrei|peguei|teve|temos|disse|vim|viajei|cheguei|liguei|ganho|ganhei|perdi)$/i;
-    for (const pattern of nomePatterns) {
-      const match = text.match(pattern);
-      if (!match) continue;
-      const nomeCapturado = match[1].trim();
-      const primeiraPalavra = nomeCapturado.split(' ')[0];
-      if (nomeCapturado.length < 3 || nomeCapturado.length >= 50) continue;
-      if (palavrasComuns.test(primeiraPalavra) || verbosForma.test(primeiraPalavra)) continue;
+
+  const nomePatterns = [
+    /(?:me chamo|meu nome [eé]|pode me chamar de|meu nome)\s+([A-ZÀ-Úa-zà-ú][a-zà-ú]+(?: (?:de |da |do |dos |das )?[A-ZÀ-Úa-zà-ú][a-zà-ú]+){0,4})/i,
+    /\b(?:sou o |sou a |sou )\s*([A-ZÀ-Ú][a-zà-ú]+(?: (?:de |da |do |dos |das )?[A-ZÀ-Úa-zà-ú][a-zà-ú]+){0,4})/i,
+    /(?:^|\n)\s*([A-ZÀ-Ú][a-zà-ú]+(?: (?:de |da |do |dos |das )?[A-ZÀ-Ú][a-zà-ú]+){1,4})\s*(?:\n|$)/m,
+    /(?:^|\n)\s*([A-ZÀ-Ú][a-zà-ú]{2,15})\s*(?:\n|$)/m
+  ];
+  const palavrasComuns = /^(sim|nao|não|oi|ola|olá|bom|boa|ok|obrigad|tudo|bem|dia|noite|tarde|quero|tenho|preciso|pode|certo|isso|aqui|agora|trabalhei|trabalho|meu|minha|fui|era|estou|estive|muito|pouco|talvez|quase|sempre|nunca|prezada|prezado|doutor|doutora|senhor|senhora|bel|salve|oie|pessoal|galera|gente|atenciosamente|cordialmente|obrigada|desculpa|desculpe|entendi|entendo|claro|perfeito|beleza|blz|show)$/i;
+  const verbosForma = /^(recebi|mandei|trouxe|vi|vou|vai|vem|faço|faz|fez|saiu|sai|entrei|peguei|teve|temos|disse|vim|viajei|cheguei|liguei|ganho|ganhei|perdi)$/i;
+
+  for (const pattern of nomePatterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const nomeCapturado = match[1].trim();
+    const primeiraPalavra = nomeCapturado.split(' ')[0];
+    if (nomeCapturado.length < 3 || nomeCapturado.length >= 50) continue;
+    if (palavrasComuns.test(primeiraPalavra) || verbosForma.test(primeiraPalavra)) continue;
+
+    // Decide se atualiza: fallback → sempre; pushName curto → upgrade se mais completo
+    const nomeTemMaisPalavras = nomeCapturado.split(' ').length > nomeAtual.split(' ').length;
+    const nomeEhUpgrade = nomeTemMaisPalavras && nomeCapturado.length > nomeAtual.length;
+    if (nomeEhFallback || nomeEhUpgrade) {
       updates.nome = nomeCapturado;
-      break;
     }
+    break;
   }
 
   // Tese — detectar subtipo trabalhista e ADICIONAR às notas (sem sobrescrever)
