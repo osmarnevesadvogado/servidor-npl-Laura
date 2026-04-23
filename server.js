@@ -435,8 +435,7 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
     const history = fullHistory.slice(0, -1);
     const ehPrimeiroContato = history.filter(m => m.role === 'assistant').length === 0;
 
-    // Primeiro contato: enviar apresentação PROGRAMÁTICA antes da resposta da IA
-    // Garante que a Laura sempre se apresenta, mesmo quando o lead vem com frase pronta do Meta
+    // Primeiro contato: enviar apresentação + credibilidade ANTES da resposta da IA
     if (ehPrimeiroContato) {
       const msgApresentacao =
         `Ola! Sou a Laura, assistente virtual (IA) do escritorio Neves Pinheiro Lins, especializado em direitos trabalhistas. ` +
@@ -445,6 +444,13 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
         `Eu nao cuido do caso, apenas faco o primeiro contato.`;
       await whatsapp.sendText(phone, msgApresentacao, instancia);
       await db.saveMessage(conversa.id, 'assistant', msgApresentacao);
+
+      const msgCredibilidade =
+        `O escritorio Neves Pinheiro Lins ja ajudou centenas de trabalhadores de todo o pais, principalmente paraenses, a conquistar seus direitos. ` +
+        `Somos registrados na OAB com equipe especializada em direito do trabalho.\n\n` +
+        `Conheca nosso escritorio e equipe: https://npladvogados.com.br`;
+      await whatsapp.sendText(phone, msgCredibilidade, instancia);
+      await db.saveMessage(conversa.id, 'assistant', msgCredibilidade);
     }
 
     // Tracking de prazo prescricional — se detecta urgência/prescrito, rastreia uma vez
@@ -789,23 +795,9 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       );
     }
 
-    // Metrica de primeiro contato + mensagem de credibilidade
+    // Metrica de primeiro contato
     if (history.length <= 1) {
       await db.trackEvent(conversa.id, lead?.id, 'primeiro_contato', senderName);
-
-      // Segunda mensagem automática: autoridade e confiança
-      const msgCredibilidade =
-        `O escritorio Neves Pinheiro Lins ja ajudou centenas de trabalhadores de todo o pais, principalmente paraenses, a conquistar seus direitos. ` +
-        `Somos registrados na OAB com equipe especializada em direito do trabalho.\n\n` +
-        `Conheca nosso escritorio e equipe: https://npladvogados.com.br`;
-      setTimeout(async () => {
-        try {
-          await whatsapp.sendText(phone, msgCredibilidade, instancia);
-          await db.saveMessage(conversa.id, 'assistant', msgCredibilidade);
-        } catch (e) {
-          console.log('[CREDIBILIDADE-NPL] Erro ao enviar:', e.message);
-        }
-      }, 3000); // 3s de delay pra não chegar junto com a primeira msg
     }
 
     console.log(`[REPLY-NPL] Para ${phone}: ${reply.slice(0, 80)}...`);
