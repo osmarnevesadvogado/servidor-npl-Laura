@@ -2688,41 +2688,50 @@ async function syncDatacrazy() {
 
   try {
     const since = datacrazySyncState.lastSync;
+    const sinceDate = new Date(since);
     const agora = new Date().toISOString();
     const headers = {
       'Authorization': `Bearer ${config.DATACRAZY_API_TOKEN}`,
       'Content-Type': 'application/json'
     };
 
-    // Buscar só conversas com mensagem enviada (pela equipe) desde último sync
+    // Buscar últimas 10 conversas (sem filtro server-side — filtramos client-side)
     const convResp = await fetch(
-      `https://api.g1.datacrazy.io/api/v1/conversations?take=10&filter[lastSendedMessageDate][$gte]=${encodeURIComponent(since)}`,
+      `https://api.g1.datacrazy.io/api/v1/conversations?take=10`,
       { headers, signal: AbortSignal.timeout(10000) }
     );
     if (!convResp.ok) {
-      if (convResp.status === 429) console.log('[DATACRAZY-SYNC] Rate limited — aguardando');
+      console.log(`[DATACRAZY-SYNC] API ${convResp.status}`);
       return;
     }
     const convData = await convResp.json();
     const conversas = convData.data || [];
 
-    if (conversas.length === 0) {
+    // Filtrar client-side: só conversas com msg enviada pela equipe após último sync
+    const convComNovaMsg = conversas.filter(c => {
+      const lastSent = c.lastSendedMessageDate || c.lastMessageDate;
+      return lastSent && new Date(lastSent) > sinceDate;
+    });
+
+    if (convComNovaMsg.length === 0) {
       datacrazySyncState.lastSync = agora;
       return;
     }
 
     let totalSalvas = 0;
 
-    for (const conv of conversas) {
+    for (const conv of convComNovaMsg) {
       const phone = conv.contact?.phoneNumber || conv.contact?.contactId;
       if (!phone || !/^\d{10,15}$/.test(phone)) continue;
 
-      // Buscar só últimas 5 mensagens (suficiente pra pegar as novas)
       const msgResp = await fetch(
         `https://api.g1.datacrazy.io/api/v1/conversations/${conv.id}/messages?take=5`,
         { headers, signal: AbortSignal.timeout(10000) }
       );
-      if (!msgResp.ok) continue;
+      if (!msgResp.ok) {
+        console.log(`[DATACRAZY-SYNC] Msgs ${conv.id}: HTTP ${msgResp.status}`);
+        continue;
+      }
       const msgData = await msgResp.json();
       const mensagens = msgData.messages || msgData.data || [];
 
@@ -2731,7 +2740,7 @@ async function syncDatacrazy() {
         !m.isInternal &&
         m.body &&
         m.body.trim().length > 0 &&
-        new Date(m.createdAt) > new Date(since)
+        new Date(m.createdAt) > sinceDate
       );
 
       if (novas.length === 0) continue;
@@ -2759,15 +2768,16 @@ async function syncDatacrazy() {
           criado_em: msg.createdAt
         });
         totalSalvas++;
+        console.log(`[DATACRAZY-SYNC] Salva: ${phone} "${msg.body.slice(0, 50)}" (${attendantName})`);
       }
     }
 
     datacrazySyncState.lastSync = agora;
     if (totalSalvas > 0) {
-      console.log(`[DATACRAZY-SYNC] ${totalSalvas} msg(s) sincronizada(s) de ${conversas.length} conversa(s)`);
+      console.log(`[DATACRAZY-SYNC] Total: ${totalSalvas} msg(s) de ${convComNovaMsg.length} conversa(s)`);
     }
   } catch (e) {
-    if (e.name === 'TimeoutError' || e.message?.includes('timeout')) return; // silencioso
+    if (e.name === 'TimeoutError' || e.message?.includes('timeout')) return;
     console.log(`[DATACRAZY-SYNC] Erro: ${e.message}`);
   } finally {
     datacrazySyncState.running = false;
