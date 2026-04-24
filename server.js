@@ -614,14 +614,17 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       console.log('[ALUCINACAO-NPL] Erro na analise:', e.message);
     }
 
-    // Cliente pediu advogado: rastrear como evento separado pra card do dashboard
-    if (lead && lead.etapa_funil === 'cliente') {
-      const clientePediuAdvogado = /(destaque|advogado.*responder|equipe.*responder|colocar.*destaque|conversa em destaque)/i.test(reply);
-      if (clientePediuAdvogado) {
-        console.log(`[CLIENTE-NPL] ${lead.nome || phone} pediu contato com advogado — destacando`);
+    // Laura encaminhou pra advogado/equipe: rastrear e pausar (independente da etapa).
+    // Detecta frases na RESPOSTA da Laura que indicam encaminhamento.
+    if (lead) {
+      const lauraEncaminhou = /(destaque|destacando sua conversa|advogado.*responder|equipe.*responder|colocar.*destaque|advogado responsavel vai|advogado responsável vai|vou acionar|ja estou avisando|já estou avisando)/i.test(reply);
+      if (lauraEncaminhou) {
+        const isCliente = lead.etapa_funil === 'cliente';
+        const evento = isCliente ? 'cliente_pediu_advogado' : 'pediu_humano';
+        console.log(`[${isCliente ? 'CLIENTE' : 'HUMANO'}-NPL] ${lead.nome || phone} — Laura encaminhou pra equipe`);
         pauseAI(phone, 120);
         try {
-          await db.trackEvent(conversa.id, lead.id, 'cliente_pediu_advogado', `${lead.nome}: ${combinedText.slice(0, 100)}`);
+          await db.trackEvent(conversa.id, lead.id, evento, `${lead.nome}: ${combinedText.slice(0, 100)}`);
         } catch (e) {}
       }
     }
@@ -902,8 +905,8 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       }
     } catch (e) {}
 
-    // Pedido explícito de falar com humano/advogado — pausa IA para a equipe atender pelo CRM
-    const pediuHumano = /(falar com (um |uma |o |a )?(advogad|atendent|pessoa|humano|alguem|alguém|gente)|nao quero falar com (a )?ia|não quero falar com (a )?ia|quero falar com um humano|quero uma pessoa|prefiro falar com (advogad|humano|pessoa|gente)|tem (advogad|humano|pessoa))/i.test(combinedText);
+    // Pedido de falar com humano/advogado — ampliado pra pegar variações naturais
+    const pediuHumano = /(falar com (um |uma |o |a )?(advogad|atendent|pessoa|humano|algu[eé]m|gente)|n[ãa]o quero falar com (a )?ia|quero falar com (um )?humano|quero uma pessoa|prefiro falar com (advogad|humano|pessoa|gente)|tem (advogad|humano|pessoa)|aguardo.{0,20}(contato|retorno).{0,20}advogad|quero.{0,10}advogad|preciso.{0,10}falar.{0,10}advogad|gostaria.{0,20}falar.{0,20}advogad|pode.{0,10}(passar|transferir|chamar).{0,10}(advogad|equipe)|contato.{0,10}(do|da|com).{0,10}advogad)/i.test(combinedText);
     if (pediuHumano) {
       console.log(`[HUMANO-NPL] ${phone} pediu para falar com advogado — pausando IA 2h`);
       pauseAI(phone, 120);
