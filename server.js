@@ -2548,7 +2548,7 @@ app.put('/api/leads/:id', requireApiKey, auditAccess('update', 'lead'), async (r
     }
     await db.updateLead(req.params.id, updates);
 
-    // Se o nome mudou, sincronizar titulo de todas as conversas vinculadas
+    // Se o nome mudou, sincronizar titulo das conversas + nome do cliente
     if (updates.nome) {
       try {
         const { data: conversasDoLead } = await db.supabase
@@ -2563,6 +2563,26 @@ app.put('/api/leads/:id', requireApiKey, auditAccess('update', 'lead'), async (r
         }
       } catch (e) {
         console.log('[LEADS] Erro ao sincronizar titulo:', e.message);
+      }
+
+      // Sincronizar com tabela clientes (se existir cliente vinculado pelo telefone)
+      try {
+        const { data: leadData } = await db.supabase.from('leads').select('telefone').eq('id', req.params.id).maybeSingle();
+        if (leadData?.telefone) {
+          const telNorm = leadData.telefone.replace(/\D/g, '');
+          const { data: cliente } = await db.supabase
+            .from('clientes')
+            .select('id')
+            .eq('telefone', telNorm)
+            .limit(1)
+            .maybeSingle();
+          if (cliente) {
+            await db.supabase.from('clientes').update({ nome_completo: updates.nome }).eq('id', cliente.id);
+            console.log(`[LEADS] Cliente sincronizado: ${updates.nome}`);
+          }
+        }
+      } catch (e) {
+        console.log('[LEADS] Erro ao sincronizar cliente:', e.message);
       }
     }
 
