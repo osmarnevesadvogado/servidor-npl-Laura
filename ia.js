@@ -728,25 +728,33 @@ async function generateFollowUp(history, lead, followUpNumber) {
   const nome = (lead && lead.nome && !lead.nome.startsWith('WhatsApp')) ? lead.nome : 'amigo(a)';
   const detalhe = lead?.notas || 'questao trabalhista';
 
-  const userMsgs = (history || []).filter(m => m.role === 'user').map(m => m.content.slice(0, 300));
-  const resumo = userMsgs.length > 0 ? userMsgs.slice(-10).join(' / ') : 'sem mensagens anteriores';
+  // Incluir TANTO msgs do lead QUANTO da Laura — pra IA ver se já dispensou
+  const conversaRecente = (history || [])
+    .slice(-15)
+    .map(m => `${m.role === 'user' ? 'LEAD' : 'LAURA'}: ${m.content.slice(0, 200)}`)
+    .join('\n');
 
   const prompt = `Voce e a Laura, assistente do escritorio NPLADVS (especializado em trabalhista, Belem/PA).
-O lead "${nome}" conversou com voce sobre "${detalhe}" mas parou de responder.
-Ultimas mensagens do lead: "${resumo}"
+O lead "${nome}" conversou com voce mas parou de responder.
 
-Este e o follow-up numero ${followUpNumber}. Gere UMA mensagem curta (2-3 frases) para retomar o contato.
+CONVERSA RECENTE (leia com atencao antes de gerar o follow-up):
+${conversaRecente}
 
-Regras:
+REGRAS CRITICAS — LEIA ANTES DE ESCREVER:
+1. Se a conversa mostra que voce (Laura) ja DISPENSOU o lead (disse "nao atendemos", "recomendo procurar outro advogado", "prazo ultrapassado", "nao podemos ajudar", "caso de prefeitura"), NAO envie follow-up. Responda EXATAMENTE: "SKIP_DISPENSADO"
+2. Se a conversa mostra que o lead disse que NAO tem interesse, NAO insista. Responda: "SKIP_SEM_INTERESSE"
+3. Se a conversa mostra que uma consulta JA FOI AGENDADA, NAO ofereca outra. Responda: "SKIP_JA_AGENDADO"
+
+Se nenhuma regra acima se aplicar, gere UMA mensagem curta (2-3 frases) para retomar contato:
 - Sem emojis
 - Use o nome da pessoa
-- REFERENCIE especificamente o que o lead disse (ex: "sobre as horas extras que voce mencionou", "sobre a sua demissao")
+- REFERENCIE especificamente o que o lead disse (nao seja generico)
 - ${followUpNumber === 1 ? 'Pergunte se ficou com alguma duvida sobre o caso dele. Seja leve e especifica.' : ''}
-- ${followUpNumber === 2 ? 'Mostre que se importa com a situacao dele. Mencione que a consulta e gratuita e sem compromisso.' : ''}
-- ${followUpNumber === 3 ? 'Use argumentos concretos: prazo de 2 anos, consulta gratuita, escritorio so cobra se ganhar. Crie urgencia se o caso permitir.' : ''}
-- ${followUpNumber === 4 ? 'Mensagem final, respeitosa. Diga que nao quer incomodar mas esta a disposicao. Mencione que a porta esta aberta.' : ''}
-- Nao mencione email. A confirmacao e por WhatsApp.
-- Termine conduzindo para o agendamento da consulta gratuita.`;
+- ${followUpNumber === 2 ? 'Mostre que se importa. Mencione que a consulta e gratuita e sem compromisso.' : ''}
+- ${followUpNumber === 3 ? 'Use argumentos: prazo de 2 anos, consulta gratuita. Crie urgencia se o caso permitir.' : ''}
+- ${followUpNumber === 4 ? 'Mensagem final, respeitosa. Diga que nao quer incomodar mas esta a disposicao.' : ''}
+- Nao mencione email. Confirmacao e por WhatsApp.
+- Conduza para agendamento da consulta gratuita.`;
 
   try {
     const response = await anthropic.messages.create({
@@ -756,6 +764,13 @@ Regras:
     });
 
     const reply = trimResponse(response.content[0].text);
+
+    // Se a IA detectou que não deve enviar follow-up, retornar null
+    if (reply.includes('SKIP_DISPENSADO') || reply.includes('SKIP_SEM_INTERESSE') || reply.includes('SKIP_JA_AGENDADO')) {
+      console.log(`[FOLLOWUP-NPL] Skip para ${nome}: ${reply.slice(0, 40)}`);
+      return null;
+    }
+
     console.log(`[FOLLOWUP-NPL] Gerado para ${nome}: "${reply.slice(0, 60)}..."`);
     return reply;
   } catch (e) {
