@@ -150,15 +150,14 @@ async function gerarAudioOpenAI(texto) {
 let elevenlabsDesativada = false; // cache quando sem crédito
 
 async function gerarAudio(texto) {
-  // Tentar ElevenLabs primeiro (voz natural), pular se já sabemos que está sem crédito
+  // Só gera áudio com ElevenLabs (voz natural). Se sem crédito, não gera — sem fallback.
   if (config.ELEVENLABS_API_KEY && !elevenlabsDesativada) {
     const audio = await gerarAudioElevenLabs(texto);
     if (audio) return audio;
-    console.log('[AUDIO-NPL] ElevenLabs falhou, usando OpenAI TTS');
   }
 
-  // OpenAI TTS (formato Opus nativo do WhatsApp)
-  return await gerarAudioOpenAI(texto);
+  // Sem ElevenLabs = sem áudio (OpenAI TTS desativado — voz robótica)
+  return null;
 }
 
 module.exports = {
