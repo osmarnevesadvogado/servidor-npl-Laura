@@ -15,7 +15,9 @@ O CRM frontend (hospedado no GitHub Pages, repositório `npladvs-crm`) chama dir
 | GET | `/api/conversas/:id/mensagens` | Mensagens de uma conversa |
 | GET | `/api/leads` | Lista leads com dados completos. Filtros: `?etapa=contato&limit=100` |
 | GET | `/api/leads/:id` | Detalhes de um lead + conversas vinculadas |
-| PUT | `/api/leads/:id` | Atualizar lead — sincroniza titulo de todas as conversas vinculadas |
+| GET | `/api/leads/aguardando-humano?dias=7` | Leads que pediram contato humano ou plano B ativado |
+| GET | `/api/clientes/destaque?dias=7` | Clientes NPL que pediram contato com advogado (card destaque) |
+| PUT | `/api/leads/:id` | Atualizar lead — sincroniza titulo de todas as conversas vinculadas. Se etapa vira `cliente`, envia msg premium automaticamente |
 | GET | `/api/metricas` | Leads por etapa, conversas ativas |
 | GET | `/api/agendamentos?dias=30` | Lista consultas do Google Calendar |
 | POST | `/api/agendamentos/manual` | Agendar consulta manualmente `{phone, nome, data, hora, formato, usuario_nome}` |
@@ -72,7 +74,7 @@ O CRM frontend (hospedado no GitHub Pages, repositório `npladvs-crm`) chama dir
 
 **metricas** — eventos rastreados
 - `id`, `conversa_id`, `lead_id`, `evento`, `detalhes`, `escritorio`, `criado_em`
-- Eventos: primeiro_contato, lead_quente, consulta_agendada, followup_2h, followup_4h, followup_24h, followup_72h, etapa_avancou, objecao, alucinacao_detectada, feedback_mensagem, prazo_prescricional, auditoria_acesso, lembrete_*
+- Eventos: primeiro_contato, lead_quente, consulta_agendada, followup_2h, followup_4h, followup_24h, followup_72h, etapa_avancou, objecao, alucinacao_detectada, feedback_mensagem, prazo_prescricional, auditoria_acesso, lembrete_*, pediu_humano, cliente_salvo, cliente_pediu_advogado
 
 **dias_nao_uteis** — feriados adicionais, enforcados, férias da equipe
 - `id`, `data` (YYYY-MM-DD), `tipo` (enforcado/feriado/ferias), `descricao`, `escritorio`
@@ -89,11 +91,12 @@ O CRM frontend (hospedado no GitHub Pages, repositório `npladvs-crm`) chama dir
 - trimResponse: máx 8 frases
 
 ## Primeiro Contato (programático — não depende da IA)
-Quando um lead manda a primeira mensagem, o servidor envia 3 msgs em sequência:
+Quando um lead manda a primeira mensagem, o servidor envia **2 msgs** e para. Laura só responde quando o lead responder.
 
-1. **Apresentação** (servidor): Laura se apresenta como IA, diz que pode errar e que tudo será revisado pelo advogado. Não cuida do caso, só faz primeiro contato.
-2. **Credibilidade** (servidor): centenas de trabalhadores ajudados, registrados na OAB, link https://npladvogados.com.br
-3. **Resposta** (Laura IA): responde ao conteúdo da mensagem do lead (empatia + primeira pergunta da triagem)
+1. **Apresentação** (servidor): Laura se apresenta como IA + explica que pode errar + pede nome completo. Tudo numa mensagem.
+2. **Credibilidade** (servidor): "Enquanto aguardo sua resposta, quero que você conheça o escritório..." + OAB + link https://npladvogados.com.br
+
+Laura IA **NÃO responde no primeiro contato** — aguarda lead mandar nome. Abordagem mais leve pro público humilde/desconfiado.
 
 Race protection: `primeiroContatoEnviado` Set impede duplicação quando lead manda msgs rápidas.
 
@@ -105,6 +108,26 @@ Race protection: `primeiroContatoEnviado` Set impede duplicação quando lead ma
 - `alucinacao.js`: pós-análise das respostas (promessas fora da política); severidade alta notifica Dr. Osmar
 - Resumo automático do caso: após agendar, Claude gera resumo executivo salvo em `leads.notas`
 - Auditoria: acesso a dados sensíveis registra evento `auditoria_acesso`
+
+## Plano B — Desconforto do Lead
+Quando Laura detecta desconforto (respostas curtas "hm/sei/ok", monossílabos, tom hostil, desconfiança), ela oferece encaminhar pra equipe:
+- Reconhece o desconforto com empatia
+- Explica que é IA criada pelo escritório pra atender todo mundo
+- Oferece colocar em lista prioritária pra advogado responder
+- Se lead aceitar, sistema pausa IA e rastreia evento `pediu_humano`
+- Frases-gatilho detectadas na resposta: "lista prioritária", "equipe vai te responder", "já estou avisando"
+- Aparece no card "Aguardando Humano" do dashboard via `/api/leads/aguardando-humano`
+
+## Atendimento Premium — Clientes NPL
+Quando lead vira **cliente** (botão "Salvar Cliente" no CRM → `PUT /api/leads/:id` com `etapa_funil: cliente`):
+- Servidor envia msg premium automaticamente: "Bem-vindo(a)! Atendimento prioritário..."
+- Rastreia evento `cliente_salvo`
+- Laura muda tom: mais próximo e caloroso, trata como cliente, não refaz triagem
+- Na primeira interação como cliente, Laura vende o diferencial tecnológico:
+  > "[nome], agora que você é cliente, quero te contar uma coisa especial. O NPLADVS é apaixonado por tecnologia e quer oferecer o melhor de IA — por isso o escritório me desenvolveu usando tecnologia de ponta do Claude AI. Posso ser sua assistente pessoal no dia a dia! Dúvidas, documentos, perguntas sobre processo. Por ser IA, posso errar — revise e tome suas decisões. Se quiser falar com advogado, é só avisar."
+- Cliente pode usar Laura como assistente pessoal: dúvidas trabalhistas, análise de documentos, cálculos, orientações sobre audiência
+- Quando cliente pede advogado → Laura destaca conversa, pausa IA 2h, rastreia `cliente_pediu_advogado`
+- Aparece no card "Clientes NPL" do dashboard via `/api/clientes/destaque`
 
 ## Agendamento (Google Calendar)
 - Horários válidos: 9h, 10h, 11h, 14h, 15h, 16h (seg-sex). **12h, 13h, 17h, 18h NÃO existem**.
@@ -145,9 +168,12 @@ Race protection: `primeiroContatoEnviado` Set impede duplicação quando lead ma
 ## Extração de Nomes
 - **pushName do WhatsApp**: emojis removidos, cargos/empresas filtrados
 - **Mensagem do lead**: padrões "me chamo X", "sou X", nome completo em linha isolada
+- **Upgrade automático**: nome com mais palavras E mais longo sobrescreve o atual (ex: pushName "Leo" → "Leonardo Silva de Souza"). Edição manual no CRM fica protegida.
 - **Proteção**: não sobrescreve nomes editados manualmente no CRM
 - **Título da conversa**: sincroniza quando lead ganha nome real; atualiza se pushName muda
 - **Filtro de falsos positivos**: palavrasComuns + verbos conjugados rejeitados
+- **Horário comercial**: leads que chegam no horário comercial também têm nome extraído (antes ficavam como "WhatsApp")
+- **Default da conversa**: nova conversa nasce com título = telefone formatado (ex: "(91) 8630-9184"), nunca mais "WhatsApp" genérico
 
 ## Captura de Mensagens Multi-Device
 ### Z-API (fromMe)
@@ -155,7 +181,7 @@ Race protection: `primeiroContatoEnviado` Set impede duplicação quando lead ma
 - Phone pode vir como `@lid` (Multi-Device privacy) — resolvido via cache `lidPhoneMap`
 - Cache populado apenas de msgs incoming (fromMe=false) — impede cache poisoning
 - Resolução fallback: match por chatName nas conversas (com normalização de acentos)
-- Dedup: `wasBotRecentSend` (60s) + `processedMessages` Map (TTL 30min por entrada) + conteúdo ±2min
+- Dedup: `wasBotRecentSend` (60s) + `processedMessages` Map (TTL 30min por entrada) + conteúdo ±5min (cobre echoes lentos do Z-API que chegam 2-3min depois do envio)
 
 ### Datacrazy (Cloud API)
 - Equipe usa Datacrazy (WhatsApp Cloud API) para atendimento — pipeline separada da Z-API
@@ -183,13 +209,18 @@ Para feriados adicionais, enforcados e férias da equipe, use a tabela `dias_nao
 
 ## Multi-instância Z-API
 **Número 01 — Escritório** (ZAPI_INSTANCE_ID, ZAPI_TOKEN, ZAPI_CLIENT_TOKEN)
-- Laura silenciosa durante horário comercial (seg-sex 8h-18h Belém)
+- Laura silenciosa durante horário comercial (seg-sex 8h-18h Belém) — mas CRIA lead, sincroniza título, extrai nome e salva mídia
 - Laura ativa à noite, fins de semana e feriados
 - Equipe atende durante o dia pelo CRM/Datacrazy
 
 **Número 02 — Prospecção** (ZAPI_INSTANCE_ID_PROSPECCAO, ZAPI_TOKEN_PROSPECCAO, ZAPI_CLIENT_TOKEN_PROSPECCAO)
 - Laura ativa 24/7
 - Foco em prospecção de leads
+
+## Áudio (ElevenLabs)
+- Áudio só quando lead envia áudio (não em follow-ups/lembretes)
+- **ElevenLabs only**: fallback OpenAI TTS foi desativado (voz robótica rejeitava leads)
+- Sem crédito ElevenLabs = sem áudio (só texto)
 
 ## Caches em memória (server.js)
 | Cache | Tipo | Cleanup | Propósito |
