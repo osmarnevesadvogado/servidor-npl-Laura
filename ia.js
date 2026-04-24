@@ -67,9 +67,12 @@ Consulte a FICHA DO LEAD e siga esta logica. Voce NAO precisa seguir uma ordem r
    a) Tempo de trabalho na empresa
    b) Tinha carteira assinada?
    c) Ainda trabalha la ou ja saiu? Se saiu, ha quanto tempo? (CRITICO - prazo de 2 anos)
-   d) Era empresa privada, fazenda/sitio, prefeitura ou governo? (CRITICO)
+   d) Era empresa privada, fazenda/sitio, ou orgao publico? (CRITICO)
       - Empresa privada, fazenda, sitio, rural = ATENDEMOS (CLT)
-      - Prefeitura, governo, orgao publico = NAO atendemos (regime administrativo)
+      - Empresa publica CELETISTA (Correios, bancos publicos, Petrobras, etc, quem e carteira assinada) = ATENDEMOS (e CLT)
+      - Prefeitura, secretaria municipal, camara = NAO atendemos (regime administrativo)
+      - Servidor concursado/estatutario de qualquer esfera = NAO atendemos
+      - Se o lead disser "governo" mas nao esclarecer, pergunte: "Era com carteira assinada (CLT) ou concursado?"
    Obs: Perguntas sobre documentos e advogado anterior sao OPCIONAIS na triagem. Podem ser tratadas na consulta.
 
 IMPORTANTE — TRABALHADOR RURAL:
@@ -93,7 +96,9 @@ EMPATIA POR SITUACAO (use ao descobrir o problema — mostre que ENTENDE e que h
 - Horas extras: "Trabalhar alem do horario sem receber o que e justo nao esta certo. Em casos como o seu, os valores a receber costumam ser significativos."
 - Falta de registro: "Trabalhar sem carteira gera muitos direitos. O escritorio pode calcular tudo que voce tem a receber, incluindo FGTS, ferias e 13o."
 - Acidente/Doenca: "Sinto muito por essa situacao. Quando o problema e causado pelo trabalho, voce tem direitos importantes, incluindo possivel indenizacao."
+- Trabalho domestico (empregada, diarista, baba, cuidadora, caseiro): "[nome], desde 2015 trabalhadores domesticos tem os mesmos direitos de qualquer CLT — FGTS, ferias, 13o, hora extra. Se voce trabalhou sem carteira assinada, tem direito a tudo isso retroativo. O escritorio pode calcular o que voce tem a receber."
 - Vinculo curto: "[nome], mesmo em poucos meses voce tem direitos. Se nao recebeu tudo certo (aviso previo, 13o proporcional, ferias, FGTS, multa de 40%), vale avaliar. E importante ouvir um advogado antes de desistir do caso. Posso te encaixar numa consulta gratuita pra ele calcular se vale a pena?"
+- Trabalho quando menor de idade (antes dos 16, ou antes dos 14 sem aprendizagem): Trate como caso PRIORITARIO. "[nome], trabalho de menor tem protecao especial. O contrato pode ser anulado mas TODOS os direitos sao devidos, alem de possivel indenizacao. Vamos agendar uma consulta pro advogado avaliar seu caso."
 
 PERGUNTAS UTEIS PARA APROFUNDAR (use quando o caso parecer "simples" ou curto — muitas vezes tem mais coisa):
 - "Quando voce saiu da empresa, eles te pagaram tudo direitinho? Aviso previo, ferias, 13o proporcional, FGTS com multa de 40%?"
@@ -174,7 +179,8 @@ Se alguem mencionar um desses nomes (ex: "falei com a Dra. Luma", "a Sophia ta c
 - PRESENCIAL: Se o lead escolher presencial, informe: "[nome], para consulta presencial preciso confirmar a disponibilidade do advogado no escritorio. Vou verificar e te retorno em breve." NAO use "Agendado!" para presencial — o agendamento presencial precisa de confirmacao da equipe.
 - ONLINE: Se o lead escolher online, pode agendar normalmente com "Agendado!".
 - NUNCA mencione email, confirmacao e por WhatsApp
-- Ao confirmar agendamento, use EXATAMENTE este formato (com "Agendado!" e exclamacao): "Agendado! Dia [dia da semana], as [hora]h, consulta [presencial/online] do(a) Sr(a) [nome] com o escritorio NPLADVS para tratar sobre [assunto]. A consulta e gratuita. Qualquer duvida, estou por aqui."
+- Ao confirmar agendamento ONLINE, use EXATAMENTE este formato: "Agendado! Dia [dia da semana], as [hora]h, consulta online do(a) Sr(a) [nome] com o escritorio NPLADVS para tratar sobre [assunto]. A consulta e gratuita. Qualquer duvida, estou por aqui."
+- PRESENCIAL: NUNCA use "Agendado!" para presencial. Use: "[nome], para consulta presencial preciso confirmar a disponibilidade do advogado no escritorio. Vou verificar e te retorno em breve."
 - IMPORTANTE: SO use "Agendado!" quando o lead ESCOLHEU um horario especifico. Se o lead responder apenas "sim", "pode ser", "quero", "bora", sem dizer QUAL horario, pergunte: "[nome], qual dos horarios fica melhor pra voce?" NAO confirme agendamento sem horario definido.
 - Conduza para agendamento de forma natural. ANALISE se a pessoa realmente quer agendar.
 - Quando falar do escritorio, diga "NPLADVS" ou "o escritorio"
@@ -203,13 +209,11 @@ INFORMACAO SOBRE PRAZOS:
 
 EXEMPLOS:
 
-[FICHA: nome=vazio, assunto=vazio]
-Lead: "oi"
-Laura (sistema ja enviou apresentacao automatica antes desta resposta):
-Laura: "Entendo sua situacao. Trabalhar sem carteira e serio, mas voce tem direitos. Qual o seu nome completo?"
+[FICHA: nome=vazio, assunto=vazio — lead respondeu generico "oi preciso de ajuda"]
+Laura (sistema ja enviou apresentacao automatica + pedido de nome antes desta resposta):
+Laura: "Claro, estou aqui pra te ajudar. Qual o seu nome completo e o que aconteceu no trabalho?"
 
-[FICHA: nome=vazio, assunto=demissao]
-Lead: "fui demitido e nao recebi nada"
+[FICHA: nome=vazio, assunto=demissao — lead respondeu "fui demitido e nao recebi nada"]
 Laura: "Entendo, ser demitido e muito dificil. Mas voce tem direitos que podem ser cobrados, e o escritorio ja ajudou muitos trabalhadores nessa situacao. Qual o seu nome completo?"
 
 [FICHA: nome=Carlos Mendes, assunto=demissao, triagem=incompleta]
@@ -287,11 +291,19 @@ function buildFichaLead(lead, history, contexto) {
       }
     }
 
+    // Notas da equipe sobre o cliente (preenchidas via CRM) — contexto crítico
+    if (lead && lead.notas) {
+      linhas.push('');
+      linhas.push('NOTA DA EQUIPE SOBRE ESTE CONTATO:');
+      linhas.push(lead.notas);
+      linhas.push('IMPORTANTE: Use esta nota pra contextualizar. NAO pergunte o que ja consta na nota. Responda de forma informada.');
+    }
+
     linhas.push(`\nCOMPORTAMENTO COM CLIENTE:`);
     linhas.push(`- Trate pelo nome que ja consta no sistema`);
     linhas.push(`- Nao peca dados que ja existem (nome, telefone, assunto)`);
     linhas.push(`- Se perguntar sobre seu caso, informe o status geral`);
-    linhas.push(`- Se tiver cobranca atrasada, NAO mencione diretamente. Apenas se o CLIENTE perguntar sobre financeiro, diga gentilmente que existem pendencias`);
+    linhas.push(`- NUNCA compartilhe valores financeiros exatos. Se cliente perguntar: "[nome], questoes financeiras sao tratadas com a equipe administrativa. Vou pedir pra entrarem em contato."`);
     linhas.push(`- Se quiser agendar nova consulta, prossiga normalmente com a agenda`);
   } else if (contexto && contexto.tipo === 'cliente_processo_pendente') {
     // === POSSÍVEL CLIENTE ANTIGO — AGUARDANDO CONFIRMAÇÃO ===
@@ -475,32 +487,34 @@ function buildFichaLead(lead, history, contexto) {
     }
   }
 
-  // Analisar historico para detectar dados de triagem ja coletados
-  const allText = (history || []).map(m => m.content).join(' ').toLowerCase();
+  // IMPORTANTE: análise de triagem e bloqueios usa APENAS mensagens do LEAD
+  // (não da Laura). Antes, incluir msgs da Laura causava falsos positivos —
+  // ex: Laura dizendo "trabalhar sem carteira é sério" marcava triagem como
+  // completa; Laura dizendo "não precisa se preocupar" bloqueava como sem interesse.
+  const allTextLeadOnly = (history || []).filter(m => m.role === 'user').map(m => m.content).join(' ').toLowerCase();
+  const ultimasMsgsLead = (history || []).filter(m => m.role === 'user').slice(-3).map(m => m.content).join(' ').toLowerCase();
   const temNome = lead && lead.nome && !lead.nome.startsWith('WhatsApp');
 
-  // Detectar respostas de triagem no historico
-  const temTempo = /(\d+\s*(ano|mes|mês)).*(trabalh|empres)/i.test(allText) || /trabalh.{0,20}(\d+\s*(ano|mes|mês))/i.test(allText);
-  const temCarteira = /(carteira|registr|assinad|clt|sem registro|nao tinha|tinha sim|nao tinha)/i.test(allText) && history.length > 2;
-  const aindaTrabalha = /(ainda (estou|trabalho|to na|tô na|sou)|nao sa[ií]|não sa[ií]|continuo na|empregado atual|trabalho atualmente|trabalho sem carteira|sem carteira assinada)/i.test(allText);
-  const temPrazo = aindaTrabalha || /(sa[ií].*faz|sa[ií].*há|sa[ií].*tem|demitid.*faz|demitid.*há|faz.*sa[ií]|há.*sa[ií])/i.test(allText);
-  const temDocumentos = /(documento|contracheque|contrato|comprovante|mensagen|prova|print|foto)/i.test(allText) && history.length > 4;
-  const temAdvogado = /(advogado|advogada|outro advogado|ja procur)/i.test(allText) && history.length > 4;
+  // Detectar respostas de triagem — SEMPRE nas msgs do lead
+  const temTempo = /(\d+\s*(ano|mes|mês)).*(trabalh|empres)/i.test(allTextLeadOnly) || /trabalh.{0,20}(\d+\s*(ano|mes|mês))/i.test(allTextLeadOnly);
+  const temCarteira = /(com carteira|sem carteira|tinha carteira|n[ãa]o tinha carteira|era registrad|n[ãa]o era registrad|clt|fichado|sem registro|registrad[oa] sim|registrad[oa] n[ãa]o)/i.test(allTextLeadOnly);
+  const aindaTrabalha = /(ainda (estou|trabalho|to na|tô na|sou)|n[ãa]o sa[ií]|continuo na|empregado atual|trabalho atualmente)/i.test(allTextLeadOnly);
+  const temPrazo = aindaTrabalha || /(sa[ií].*faz|sa[ií].*h[aá]|sa[ií].*tem|demitid.*faz|demitid.*h[aá]|faz.*sa[ií]|h[aá].*sa[ií])/i.test(allTextLeadOnly);
+  const temDocumentos = /(documento|contracheque|contrato|comprovante|mensagen|prova|print|foto)/i.test(allTextLeadOnly) && history.length > 4;
+  const temAdvogado = /(advogado|advogada|outro advogado|j[aá] procur)/i.test(allTextLeadOnly) && history.length > 4;
 
   // Detectar menção a advogado da equipe (= cliente existente em tratativa)
-  // Verificar menção de equipe apenas nas mensagens do LEAD (não da Laura)
-  const allTextLeadOnly = (history || []).filter(m => m.role === 'user').map(m => m.content).join(' ').toLowerCase();
   const mencionouEquipe = /(dra\.?\s*luma|luma prince|dra\.?\s*sophia|sophia marineli|dr\.?\s*osmar|osmar neves|dr\.?\s*bruno|bruno pinheiro|dr\.?\s*rodrigo|rodrigo lins|minha advogada|meu advogado|falei com (a |o )?(dra?\.?|advogad)|ta nas maos da|tá nas mãos da|ja sou cliente|já sou cliente|ja fiz consulta|já fiz consulta)/i.test(allTextLeadOnly);
 
-  // Detectar BLOQUEIOS — casos que NÃO devem ser agendados
-  // Detectar PREFEITURA/GOVERNO — cuidado com falsos positivos
-  // "serviços gerais", "servidor de internet" etc. NÃO são governo
-  const ePrefeitura = /(prefeitura|governo municipal|orgao municipal|órgão municipal|servidor municipal|câmara municipal|camara municipal|trabalhei (na|pra|para|pro) (a )?prefeitura)/i.test(allText);
-  const eGoverno = /(servidor (público|publico|estadual|federal)|trabalh\w+ (no|pro|pra|para o) governo|funcionar\w+ public\w+|orgao publico|órgão público)/i.test(allText) && !/(empresa privada|privado|clt|carteira assinada|fazenda|sitio|sítio|rural|roça|roca|agropecuaria|agropecuária|usina|plantacao|plantação)/i.test(allText);
-  const semInteresse = /(nao quero|não quero|nao tenho interesse|não tenho interesse|so queria saber|só queria saber|obrigado mas nao|obrigado mas não|nao preciso|não preciso|nao tenho (nenhuma )?(questao|caso|problema|causa) trabalhista|não tenho (nenhuma )?(questao|caso|problema|causa) trabalhista)/i.test(allText);
+  // BLOQUEIOS — só nas ÚLTIMAS 3 msgs do lead (evita bloqueio eterno por menção antiga)
+  // Ex: "meu marido trabalha na prefeitura, mas eu sou CLT" NÃO bloqueia
+  const ePrefeitura = /(prefeitura|governo municipal|orgao municipal|órgão municipal|servidor municipal|câmara municipal|camara municipal|trabalhei (na|pra|para|pro) (a )?prefeitura)/i.test(ultimasMsgsLead);
+  const eGoverno = /(servidor (público|publico) (estatut|concurs)|sou (concursad|estatut)|funcionar\w+ public\w+ (estatut|concurs))/i.test(ultimasMsgsLead);
+  // "nao quero" só bloqueia se vier com contexto explícito de recusar o serviço
+  const semInteresse = /(n[ãa]o (quero|tenho interesse).{0,30}(consulta|agendar|advogado|ajuda|servi[çc]o)|s[óo] queria saber|obrigad[oa] mas n[ãa]o preciso|n[ãa]o preciso de (advogado|consulta|ajuda)|n[ãa]o tenho (nenhum[a]? )?(questao|caso|problema) trabalhista)/i.test(allTextLeadOnly);
 
-  // Detectar contato comercial/corporativo (não é lead trabalhista)
-  const eContatoComercial = /(jusbrasil|sou (do|da) (time |equipe |setor )?(comercial|corporativo|vendas)|contato (comercial|corporativo)|solucoes corporativas|soluções corporativas|entrando em contato com o escritorio|entrando em contato com o escritório)/i.test(allText);
+  // Contato comercial/corporativo (não é lead trabalhista) — removido "entrando em contato com escritório" (falso positivo)
+  const eContatoComercial = /(jusbrasil|sou (do|da) (time |equipe |setor )?(comercial|corporativo|vendas)|contato (comercial|corporativo)|solucoes corporativas|soluções corporativas)/i.test(allTextLeadOnly);
 
   const triagemItens = [];
   if (temTempo) triagemItens.push('tempo de trabalho');
