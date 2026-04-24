@@ -202,10 +202,10 @@ Para feriados adicionais, enforcados e férias da equipe, use a tabela `dias_nao
 ## Bloqueios automáticos
 - Prefeitura/governo municipal → não agenda (verifica só 2 últimas msgs + atual, não histórico inteiro)
 - Servidor público → pede confirmação
-- Vínculo < 3 meses → não agenda
 - Prescrição > 2 anos → não agenda
 - Lead sem interesse → encerra
 - **Trabalhador rural = CLT = ATENDE** (não confundir com governo)
+- **Vínculo curto NÃO é bloqueio** — Laura explora o caso com perguntas direcionadas; se lead quiser consulta, oferece (advogado avalia viabilidade econômica)
 
 ## Multi-instância Z-API
 **Número 01 — Escritório** (ZAPI_INSTANCE_ID, ZAPI_TOKEN, ZAPI_CLIENT_TOKEN)
