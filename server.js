@@ -656,6 +656,17 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
 
     await db.saveMessage(conversa.id, 'assistant', reply);
 
+    // Detectar dispensação: Laura informou que não pode atender o caso.
+    // Mover pra "perdido" pra evitar follow-up contraditório depois.
+    const dispensou = /(n[ãa]o (poder|podemos|posso) (te )?ajudar|lamento n[ãa]o poder|recomendo procurar (um |outro )?advogado|procurar.*(advogado|sindicato)|n[ãa]o atendemos (casos de |esse tipo)|prazo.*(ultrapassado|excedido|vencido)|prescri[çc][ãa]o.*ultrapass)/i.test(reply);
+    if (dispensou && lead) {
+      const etapaAtual = lead.etapa_funil || 'contato';
+      if (!['agendamento', 'documentos', 'cliente'].includes(etapaAtual)) {
+        await db.updateLead(lead.id, { etapa_funil: 'perdido' });
+        console.log(`[FUNIL-NPL] ${lead.nome || phone} marcado como perdido (Laura dispensou: caso fora do escopo)`);
+      }
+    }
+
     // Se Laura confirmou agendamento, criar evento no Google Calendar
     const replyLower = reply.toLowerCase();
 
