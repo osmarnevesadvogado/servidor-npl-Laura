@@ -226,7 +226,7 @@ function getHorasDoDia() {
   for (let h = HORARIOS_TARDE.inicio; h < HORARIOS_TARDE.fim; h++) {
     horas.push(h);
   }
-  return horas; // [8, 9, 10, 11, 14, 15, 16]
+  return horas; // [9, 10, 11, 14, 15, 16]
 }
 
 // ===== BUSCAR HORÁRIOS DISPONÍVEIS =====
@@ -578,8 +578,14 @@ async function encontrarSlot(texto, phoneAtual = null) {
   if (matchData) {
     const dia = parseInt(matchData[1]);
     const mes = matchData[2] ? parseInt(matchData[2]) - 1 : agoraBelem().getUTCMonth();
-    const ano = agoraBelem().getUTCFullYear();
-    dataExplicita = new Date(Date.UTC(ano, mes, dia));
+    let ano = agoraBelem().getUTCFullYear();
+    let dataCandidata = new Date(Date.UTC(ano, mes, dia));
+    // Year rollover: "02/01" em dezembro → janeiro do próximo ano
+    if (dataCandidata < new Date() && mes < agoraBelem().getUTCMonth()) {
+      ano++;
+      dataCandidata = new Date(Date.UTC(ano, mes, dia));
+    }
+    dataExplicita = dataCandidata;
   }
 
   const belemAgora = agoraBelem();
@@ -719,7 +725,8 @@ async function construirSlotDeTexto(texto) {
     const t = new Date(belemAgora);
     const hoje = t.getUTCDay();
     let delta = (diaSemanaAlvo - hoje + 7) % 7;
-    if (delta === 0) delta = 7; // proxima ocorrencia, nao hoje
+    // delta=0 = hoje. Só pula pra próxima semana se já passou o último horário.
+    if (delta === 0 && belemAgora.getUTCHours() >= 17) delta = 7;
     t.setUTCDate(t.getUTCDate() + delta);
     dataExplicita = { ano: t.getUTCFullYear(), mes: t.getUTCMonth(), dia: t.getUTCDate() };
   }

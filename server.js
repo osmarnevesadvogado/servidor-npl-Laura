@@ -431,8 +431,6 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
     if (lead && isHotLead(combinedText) && !jaNotificouHot.has(cleanP)) {
       jaNotificouHot.add(cleanP);
       console.log(`[HOT-NPL] Lead quente: ${finalName}`);
-      await db.markLeadHot(lead.id);
-      // Notificação desativada — Dr. Osmar só recebe msg quando Laura agenda consulta
       await db.trackEvent(conversa.id, lead.id, 'lead_quente', combinedText.slice(0, 100));
     }
 
