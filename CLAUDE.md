@@ -6,7 +6,7 @@ Servidor Node.js/Express que opera a Laura, assistente virtual do escritório Ne
 ## Integração com CRM
 O CRM frontend (hospedado no GitHub Pages, repositório `npladvs-crm`) chama diretamente os endpoints deste servidor. **Este é o único backend** — não existe outro servidor para o CRM. Todas as chamadas do CRM vão para `https://servidor-npl.onrender.com`.
 
-### Endpoints da API (todos POST requerem header `x-api-key`)
+### Endpoints da API (TODOS requerem header `x-api-key`, exceto /api/health e webhooks)
 
 | Método | Endpoint | Descrição |
 |--------|----------|-----------|
@@ -197,6 +197,15 @@ Quando lead vira **cliente** (botão "Salvar Cliente" no CRM → `PUT /api/leads
 - Advogadas associadas: Dra. Luma Prince, Dra. Sophia Marineli
 - Estagiária: Luiza
 - Se alguém mencionar um desses nomes, Laura trata como cliente existente em tratativa
+- **Detecção ampliada**: frases como "meu caso já está com vocês", "previsão de audiência", "andamento do processo" também identificam cliente existente (não só nome de advogado)
+
+## Assinatura da Laura
+Toda resposta da Laura termina com:
+> _Laura — Assistente Virtual (IA) | Escritório NPL_
+
+## Documentação complementar
+- `SECURITY.md` — segurança, autenticação, proteções, checklist de deploy
+- `LAURA-GUIDE.md` — comportamento da IA, fluxos, regras aprendidas, arquitetura do prompt
 
 ## Feriados reconhecidos automaticamente (2025-2027)
 Nacionais + Estadual PA + Municipais Belém (hardcoded em calendar.js).
@@ -223,7 +232,8 @@ Para feriados adicionais, enforcados e férias da equipe, use a tabela `dias_nao
 ## Áudio (ElevenLabs)
 - Áudio só quando lead envia áudio (não em follow-ups/lembretes)
 - **ElevenLabs only**: fallback OpenAI TTS foi desativado (voz robótica rejeitava leads)
-- Sem crédito ElevenLabs = sem áudio (só texto)
+- Sem crédito ElevenLabs = sem áudio (só texto), retenta após 24h automaticamente
+- Proteção SSRF: `isUrlSegura()` bloqueia URLs internas/privadas antes de baixar áudio
 
 ## Caches em memória (server.js)
 | Cache | Tipo | Cleanup | Propósito |
