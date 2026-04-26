@@ -166,12 +166,15 @@ async function extractAndUpdateLead(leadId, text) {
 
   const nomePatterns = [
     /(?:me chamo|meu nome [eé]|pode me chamar de|meu nome)\s+([A-ZÀ-Úa-zà-ú][a-zà-ú]+(?: (?:de |da |do |dos |das )?[A-ZÀ-Úa-zà-ú][a-zà-ú]+){0,4})/i,
-    /\b(?:sou o |sou a |sou )\s*([A-ZÀ-Ú][a-zà-ú]+(?: (?:de |da |do |dos |das )?[A-ZÀ-Úa-zà-ú][a-zà-ú]+){0,4})/i,
+    // Sem flag /i: o "sou" inicial casa minusculo OU maiusculo via grupo (?:sou|Sou|SOU),
+    // mas o NOME capturado precisa comecar com maiuscula real ([A-ZÀ-Ú]) — evita capturar
+    // frases tipo "sou do Rio de janeiro" como nome.
+    /\b(?:sou|Sou|SOU)\s+(?:o\s+|a\s+)?([A-ZÀ-Ú][a-zà-ú]+(?: (?:de |da |do |dos |das )?[A-ZÀ-Úa-zà-ú][a-zà-ú]+){0,4})/,
     /(?:^|\n)\s*([A-ZÀ-Ú][a-zà-ú]+(?: (?:de |da |do |dos |das )?[A-ZÀ-Ú][a-zà-ú]+){1,4})\s*(?:\n|$)/m,
     /(?:^|\n)\s*([A-ZÀ-Ú][a-zà-ú]{2,15})\s*(?:\n|$)/m
   ];
-  const palavrasComuns = /^(sim|nao|não|oi|ola|olá|bom|boa|ok|obrigad|tudo|bem|dia|noite|tarde|quero|tenho|preciso|pode|certo|isso|aqui|agora|trabalhei|trabalho|meu|minha|fui|era|estou|estive|muito|pouco|talvez|quase|sempre|nunca|prezada|prezado|doutor|doutora|senhor|senhora|bel|salve|oie|pessoal|galera|gente|atenciosamente|cordialmente|obrigada|desculpa|desculpe|entendi|entendo|claro|perfeito|beleza|blz|show)$/i;
-  const verbosForma = /^(recebi|mandei|trouxe|vi|vou|vai|vem|faço|faz|fez|saiu|sai|entrei|peguei|teve|temos|disse|vim|viajei|cheguei|liguei|ganho|ganhei|perdi)$/i;
+  const palavrasComuns = /^(sim|nao|não|oi|ola|olá|bom|boa|ok|obrigad|tudo|bem|dia|noite|tarde|quero|tenho|preciso|pode|certo|isso|aqui|agora|trabalhei|trabalho|meu|minha|fui|era|estou|estive|muito|pouco|talvez|quase|sempre|nunca|prezada|prezado|doutor|doutora|senhor|senhora|bel|salve|oie|pessoal|galera|gente|atenciosamente|cordialmente|obrigada|desculpa|desculpe|entendi|entendo|claro|perfeito|beleza|blz|show|do|da|de|dos|das|no|na|nos|nas|em|por|pra|para|com|sem|ao|aos|um|uma|uns|umas|eu|você|voce|ele|ela|nós|nos|vocês|voces|eles|elas|esse|essa|aquele|aquela|este|esta|que|quem|onde|quando|porque|por que|pq|tava|estava|estavam|fomos|foram|tive|teve|tivemos)$/i;
+  const verbosForma = /^(recebi|mandei|trouxe|vi|vou|vai|vem|faço|faz|fez|saiu|sai|entrei|peguei|teve|temos|disse|vim|viajei|cheguei|liguei|ganho|ganhei|perdi|sou|é|está|estou|estive|estava|estavam|tava|tinha|tive|teve|fui|foi|fomos|foram|seria|seriam|posso|pode|podemos|podem)$/i;
 
   for (const pattern of nomePatterns) {
     const match = text.match(pattern);
@@ -181,9 +184,15 @@ async function extractAndUpdateLead(leadId, text) {
     if (nomeCapturado.length < 3 || nomeCapturado.length >= 50) continue;
     if (palavrasComuns.test(primeiraPalavra) || verbosForma.test(primeiraPalavra)) continue;
 
-    // Decide se atualiza: fallback → sempre; pushName curto → upgrade se mais completo
+    // Decide se atualiza:
+    // - nomeAtual e fallback (telefone, "WhatsApp"): aceita qualquer nome valido
+    // - ja tem nome real: so faz upgrade se o novo COMECA com a mesma primeira palavra
+    //   (ex: "Viviane" -> "Viviane Silva" OK; "Viviane" -> "do Rio de janeiro" REJEITADO)
+    const nomeAtualPrimeira = (nomeAtual.split(' ')[0] || '').toLowerCase();
+    const nomeNovoPrimeira = primeiraPalavra.toLowerCase();
+    const compartilhaPrimeiraPalavra = nomeAtualPrimeira && nomeNovoPrimeira === nomeAtualPrimeira;
     const nomeTemMaisPalavras = nomeCapturado.split(' ').length > nomeAtual.split(' ').length;
-    const nomeEhUpgrade = nomeTemMaisPalavras && nomeCapturado.length > nomeAtual.length;
+    const nomeEhUpgrade = compartilhaPrimeiraPalavra && nomeTemMaisPalavras && nomeCapturado.length > nomeAtual.length;
     if (nomeEhFallback || nomeEhUpgrade) {
       updates.nome = nomeCapturado;
     }
