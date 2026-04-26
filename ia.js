@@ -668,7 +668,9 @@ function trimResponse(text) {
   // Não truncar agressivamente — confiar no prompt para manter respostas curtas
   // Só corta se passar de 8 frases (caso extremo)
   const result = restored.slice(0, 8).join(' ').trim();
-  return result;
+
+  // Assinatura da Laura em itálico (WhatsApp markdown)
+  return result + '\n\n_Laura — Assistente Virtual (IA) | Escritorio NPL_';
 }
 
 // ===== HISTÓRICO =====
