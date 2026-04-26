@@ -1211,6 +1211,25 @@ async function checkLembretesConsulta() {
       const minFaltando = (inicioMs - agora) / (1000 * 60);
       const tituloPessoa = consulta.colaboradora === 'Luiza' ? 'a colaboradora' : 'a advogada';
 
+      // Helper: envia + salva no banco da conversa.
+      // Sem o saveMessage, o polling do Datacrazy puxa a msg do WhatsApp e
+      // a salva como "Equipe (Datacrazy)" — o lembrete da Laura aparece com
+      // rotulo errado no CRM.
+      let conversaParaLembrete = null;
+      const enviarLembrete = async (msg) => {
+        await whatsapp.sendText(consulta.telefone, msg, consulta.origem || 'escritorio');
+        try {
+          if (!conversaParaLembrete) {
+            conversaParaLembrete = await db.getOrCreateConversa(consulta.telefone);
+          }
+          if (conversaParaLembrete) {
+            await db.saveMessage(conversaParaLembrete.id, 'assistant', msg);
+          }
+        } catch (e) {
+          console.log(`[LEMBRETE-NPL] Erro ao salvar msg no banco (${consulta.nome}):`, e.message);
+        }
+      };
+
       // ===== 48h antes: cobrança de documentos =====
       const chaveDocs = `cobrancaDocs_${consulta.id}`;
       if (minFaltando >= 46 * 60 && minFaltando <= 50 * 60 && !(await jaEnviado(chaveDocs))) {
@@ -1224,7 +1243,7 @@ async function checkLembretesConsulta() {
             `- Contrato de trabalho (se tiver)\n` +
             `- Qualquer prova do caso (mensagens, fotos, e-mails)\n\n` +
             `Pode mandar por aqui mesmo, se preferir. Qualquer dúvida me chama!`;
-          await whatsapp.sendText(consulta.telefone, msg, consulta.origem || 'escritorio');
+          await enviarLembrete(msg);
           console.log(`[LEMBRETE-NPL] Cobrança de documentos (48h) para ${consulta.nome}`);
         } catch (e) {
           console.log(`[LEMBRETE-NPL] Erro cobrança docs ${consulta.nome}:`, e.message);
@@ -1240,7 +1259,7 @@ async function checkLembretesConsulta() {
             `às ${consulta.inicioFormatado} com ${tituloPessoa} ${consulta.colaboradora}.\n\n` +
             `Vai conseguir comparecer? Se precisar remarcar, me avisa por aqui que eu ajeito.\n\n` +
             `Estamos te aguardando!`;
-          await whatsapp.sendText(consulta.telefone, msg, consulta.origem || 'escritorio');
+          await enviarLembrete(msg);
           console.log(`[LEMBRETE-NPL] Confirmação 24h para ${consulta.nome}`);
         } catch (e) {
           console.log(`[LEMBRETE-NPL] Erro confirmação 24h ${consulta.nome}:`, e.message);
@@ -1257,7 +1276,7 @@ async function checkLembretesConsulta() {
             `Passando para lembrar que hoje você tem consulta trabalhista às ${consulta.inicioFormatado} ` +
             `com ${tituloPessoa} ${consulta.colaboradora}. A consulta será online. ` +
             `Nos vemos mais tarde!`;
-          await whatsapp.sendText(consulta.telefone, msgTexto, consulta.origem || 'escritorio');
+          await enviarLembrete(msgTexto);
           console.log(`[LEMBRETE-NPL] Lembrete matinal (08h) para ${consulta.nome}`);
         } catch (e) {
           console.log(`[LEMBRETE-NPL] Erro lembrete matinal ${consulta.nome}:`, e.message);
@@ -1272,7 +1291,7 @@ async function checkLembretesConsulta() {
           const msg = `${consulta.nome}, faltando 1h para sua consulta trabalhista com ${tituloPessoa} ${consulta.colaboradora}.\n\n` +
             `Separe um lugar tranquilo e, se tiver, os documentos (CTPS, holerites, contrato, prints). ` +
             `O link da reunião chega por aqui antes do horário.`;
-          await whatsapp.sendText(consulta.telefone, msg, consulta.origem || 'escritorio');
+          await enviarLembrete(msg);
           console.log(`[LEMBRETE-NPL] Lembrete 1h enviado para ${consulta.nome}`);
         } catch (e) {
           console.log(`[LEMBRETE-NPL] Erro lembrete 1h ${consulta.nome}:`, e.message);
@@ -1288,7 +1307,7 @@ async function checkLembretesConsulta() {
             `comeca em 30 minutos!\n\n` +
             `O link para a reuniao online sera enviado em instantes.\n\n` +
             `Escritorio NPLADVS - Estamos te aguardando!`;
-          await whatsapp.sendText(consulta.telefone, msgLembrete, consulta.origem || 'escritorio');
+          await enviarLembrete(msgLembrete);
           console.log(`[LEMBRETE-NPL] Lembrete 30min enviado para ${consulta.nome}`);
         } catch (e) {
           console.log(`[LEMBRETE-NPL] Erro lembrete 30min ${consulta.nome}:`, e.message);
@@ -1322,7 +1341,7 @@ async function checkLembretesConsulta() {
               const msg = `Oi, ${consulta.nome}! Aqui é a Laura. Não consegui confirmar se sua consulta de hoje rolou. ` +
                 `Deu algum imprevisto? Se precisar, consigo reagendar com ${tituloPessoa} ${consulta.colaboradora} ` +
                 `em outro horário — é só me dizer o melhor dia pra você.`;
-              await whatsapp.sendText(consulta.telefone, msg, consulta.origem || 'escritorio');
+              await enviarLembrete(msg);
               console.log(`[LEMBRETE-NPL] Re-engajamento no-show para ${consulta.nome}`);
             } else {
               await marcarEnviado(chaveNoShow);
