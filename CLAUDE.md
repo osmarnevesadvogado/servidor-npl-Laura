@@ -84,19 +84,28 @@ O CRM frontend (hospedado no GitHub Pages, repositório `npladvs-crm`) chama dir
 **npl_clientes_processos** — base de clientes antigos (importada)
 
 ## Modelo de IA
-- **Claude Sonnet 4** (claude-sonnet-4-20250514) — modelo principal para conversas
+- **Claude Sonnet 4** (claude-sonnet-4-20250514) — modelo principal para conversas (config.js)
+- **Claude Haiku 4.5** — classificação/cobrança de documentos (documentos.js)
+- **Claude Opus 4.7** — extração estruturada de PDF (documentos.js)
 - MAX_TOKENS: 800 (respostas objetivas)
 - Janela de contexto: 150 mensagens enviadas ao Claude
 - Ficha do lead: 40 mensagens anteriores resumidas
 - trimResponse: máx 8 frases
+- **Prompt caching ativado** em `generateResponse` (ia.js): SYSTEM_PROMPT_BASE (~50KB) marcado com `cache_control: ephemeral`. Cache hit cobra 10% do input — economia ~90% em janelas de 5min (rajadas, follow-ups, lembretes consecutivos)
+- **Retry exponencial** (`callClaudeWithRetry` em ia.js): 3 tentativas com backoff 2s/4s/8s. Erros permanentes (sem crédito, 4xx) pulam o retry. Aplicado em generateResponse, generateFollowUp, gerarResumoCaso
+- **Proxy `/api/chat`** do CRM usa `config.CLAUDE_MODEL` (não mais hardcoded)
 
 ## Primeiro Contato (programático — não depende da IA)
-Quando um lead manda a primeira mensagem, o servidor envia **2 msgs** e para. Laura só responde quando o lead responder.
+Quando um lead **totalmente novo** manda a primeira mensagem, o servidor envia **2 msgs** e para. Laura só responde quando o lead responder.
 
 1. **Apresentação** (servidor): Laura se apresenta como IA + explica que pode errar + pede nome completo. Tudo numa mensagem.
 2. **Credibilidade** (servidor): "Enquanto aguardo sua resposta, quero que você conheça o escritório..." + OAB + link https://npladvogados.com.br
 
-Laura IA **NÃO responde no primeiro contato** — aguarda lead mandar nome. Abordagem mais leve pro público humilde/desconfiado.
+Laura IA **NÃO responde no primeiro contato** de lead novo — aguarda lead mandar nome. Abordagem mais leve pro público humilde/desconfiado.
+
+### Apresentação programática é PULADA quando:
+- **Telefone reconhecido como cliente do CRM** (tabela `clientes`) — Laura responde direto em modo premium pra não soar "esquecida"
+- **Lead já avançou no funil** (`etapa_funil !== 'novo'`) — caso típico: lead agendou, conversa fechou, lead voltou pra mandar mais info → Laura responde com contexto (lead.notas tem o resumo) em vez de pedir nome de novo
 
 Race protection: `primeiroContatoEnviado` Set impede duplicação quando lead manda msgs rápidas.
 
@@ -119,16 +128,42 @@ Quando Laura detecta desconforto (respostas curtas "hm/sei/ok", monossílabos, t
 - Aparece no card "Aguardando Humano" do dashboard via `/api/leads/aguardando-humano`
 
 ## Atendimento Premium — Clientes NPL
-Quando lead vira **cliente** (botão "Salvar Cliente" no CRM → `PUT /api/leads/:id` com `etapa_funil: cliente`):
+**3 caminhos de detecção** (qualquer um aciona modo premium):
+1. Tabela `clientes` (CRM) com telefone batendo em `getContextoCompleto`
+2. `etapa_funil === 'cliente'` no lead (botão "Salvar Cliente" no CRM)
+3. Tabela `npl_clientes_processos` (planilha de clientes antigos) com nome batendo após confirmação
+
+Quando lead vira cliente via "Salvar Cliente" no CRM (`PUT /api/leads/:id` com `etapa_funil: cliente`):
 - Servidor envia msg premium automaticamente: "Bem-vindo(a)! Atendimento prioritário..."
 - Rastreia evento `cliente_salvo`
-- Laura muda tom: mais próximo e caloroso, trata como cliente, não refaz triagem
-- Na primeira interação como cliente, Laura vende o diferencial tecnológico:
-  > "[nome], agora que você é cliente, quero te contar uma coisa especial. O NPLADVS é apaixonado por tecnologia e quer oferecer o melhor de IA — por isso o escritório me desenvolveu usando tecnologia de ponta do Claude AI. Posso ser sua assistente pessoal no dia a dia! Dúvidas, documentos, perguntas sobre processo. Por ser IA, posso errar — revise e tome suas decisões. Se quiser falar com advogado, é só avisar."
-- Cliente pode usar Laura como assistente pessoal: dúvidas trabalhistas, análise de documentos, cálculos, orientações sobre audiência
-- **Notas da equipe**: campo `notas` do lead aparece em destaque na ficha como "NOTA DA EQUIPE SOBRE ESTE CONTATO". Laura usa pra contextualizar respostas (ex: "acordo em execução" → Laura informa sem precisar acionar advogado)
-- Quando cliente pede advogado → Laura destaca conversa, pausa IA 2h, rastreia `cliente_pediu_advogado`
-- Aparece no card "Clientes NPL" do dashboard via `/api/clientes/destaque`
+
+### Comportamento da Laura no modo premium (TODOS os 3 caminhos)
+- Tom mais próximo e caloroso, trata como cliente, **não refaz triagem**
+- Vende o diferencial: "**prioridade direta com a equipe de advogados NPL**" + "atendimento 24h via IA de ponta (Claude AI)"
+- Na primeira interação como cliente confirmado:
+  > "[nome], que bom falar com você! Sou a Laura, IA do escritório NPL. Tenho uma novidade massa: o NPL investiu em IA de ponta pra te dar atendimento premium 24h por aqui. Você tem PRIORIDADE DIRETA com nossa equipe de advogados — se quiser falar com seu advogado, é só me avisar que já aciono pra te dar retorno o quanto antes. E pra dúvidas do dia a dia, prazos, audiências, termos do processo — pode contar comigo. O que você precisa hoje?"
+- **NÃO repete essa apresentação** após a primeira
+
+### O que Laura faz pelo cliente
+1. Responde dúvidas usando os DADOS DOS PROCESSOS da planilha (fase, próxima audiência, prazos, tribunal) — **APENAS o que está listado, nunca inventa**
+2. Interpreta termos jurídicos básicos (execução, alvará, trânsito em julgado, perícia, etc)
+3. Orienta sobre audiência (preparação, o que levar)
+4. Tira dúvidas trabalhistas gerais
+
+### Quando Laura aciona o advogado
+- Cliente pede explicitamente
+- Pergunta valor / quanto vai receber / quando cai o dinheiro
+- Pergunta sobre acordo, negociação com a empresa
+- Pergunta algo que não está nos DADOS DOS PROCESSOS (a Laura não inventa)
+- Cliente nervoso, com pressa, urgência real
+- Resposta padrão: *"[nome], deixa que aciono [seu/sua] advogad[o/a] agora pra te dar retorno o quanto antes! Aqui no NPL você tem prioridade."* (sistema pausa automaticamente)
+
+### Notas da equipe
+Campo `notas` do lead aparece em destaque na ficha como "NOTA DA EQUIPE SOBRE ESTE CONTATO". Laura usa pra contextualizar respostas (ex: "acordo em execução" → Laura informa sem precisar acionar advogado).
+
+### Card no dashboard
+- Cliente NPL pediu advogado → aparece em `/api/clientes/destaque`
+- Lead pediu humano (Plano B) → aparece em `/api/leads/aguardando-humano`
 
 ## Agendamento (Google Calendar)
 - Horários válidos: 9h, 10h, 11h, 14h, 15h, 16h (seg-sex). **12h, 13h, 17h, 18h NÃO existem**.
@@ -158,6 +193,7 @@ Quando lead vira **cliente** (botão "Salvar Cliente" no CRM → `PUT /api/leads
 - +2h depois: re-engajamento no-show (só se lead NÃO respondeu após a consulta)
 - Dedup: persistido em metricas (evento `lembrete_<chave>`) — sobrevive a deploys
 - Instância: cada lembrete usa `consulta.origem` (escritório ou prospecção) para enviar pelo número correto
+- **Salvos no banco**: helper `enviarLembrete()` envia + chama `db.saveMessage`. Sem isso, o polling do Datacrazy puxava a msg pelo espelho do número e salvava com rótulo "Equipe (Datacrazy)" no CRM.
 
 ## Follow-ups (automáticos, 8h-20h Belém)
 - 2h, 4h, 24h, 72h sem resposta do lead
@@ -169,8 +205,11 @@ Quando lead vira **cliente** (botão "Salvar Cliente" no CRM → `PUT /api/leads
 ## Extração de Nomes
 - **pushName do WhatsApp**: emojis removidos, cargos/empresas filtrados
 - **Mensagem do lead**: padrões "me chamo X", "sou X", nome completo em linha isolada
-- **Upgrade automático**: nome com mais palavras E mais longo sobrescreve o atual (ex: pushName "Leo" → "Leonardo Silva de Souza"). Edição manual no CRM fica protegida.
-- **Proteção**: não sobrescreve nomes editados manualmente no CRM
+- **Upgrade automático**: nome com mais palavras E mais longo sobrescreve o atual (ex: pushName "Leo" → "Leonardo Silva de Souza"). **EXIGE prefix match**: a primeira palavra do nome novo precisa bater com a do atual (proteção contra "Viviane" virar "do Rio de janeiro"). Edição manual no CRM fica protegida.
+- **Proteção contra frases capturadas como nome**:
+  - Regex de "sou X" sem flag `/i` no nome capturado — exige que o nome comece com maiúscula real (evita "sou do Rio de janeiro" → "do Rio de janeiro")
+  - `palavrasComuns` filtra preposições/artigos/pronomes na primeira palavra (do, da, no, eu, ele, esse, etc)
+  - `verbosForma` filtra verbos comuns (sou, é, está, fui, etc)
 - **Título da conversa**: sincroniza quando lead ganha nome real; atualiza se pushName muda
 - **Nomes minúsculos**: "glacielnunesdasilva" (tudo junto, sem maiúscula) agora é aceito como nome real (4+ letras consecutivas)
 - **Sync com tabela clientes**: quando nome muda via API, propaga para `leads.nome` + `conversas.titulo` + `clientes.nome_completo`
@@ -198,6 +237,15 @@ Quando lead vira **cliente** (botão "Salvar Cliente" no CRM → `PUT /api/leads
 - Estagiária: Luiza
 - Se alguém mencionar um desses nomes, Laura trata como cliente existente em tratativa
 - **Detecção ampliada**: frases como "meu caso já está com vocês", "previsão de audiência", "andamento do processo" também identificam cliente existente (não só nome de advogado)
+
+## Pause da IA (cirúrgica)
+A IA é pausada por 24h apenas em **2 cenários fortes** (não mais por simples detecção de cliente):
+1. Cliente menciona advogado pelo NOME (Dra. Luma, Dr. Osmar, etc) — sinal de tratativa direta
+2. A própria Laura, na resposta, sinaliza escalonamento ("aciono seu advogado", "vou avisar a equipe", "destacando conversa")
+
+Pedido genérico de humano continua tratado pelo Plano B (pause 2h + tracking de evento `pediu_humano`).
+
+**Por que não pausa por simples detecção:** no modelo premium, a Laura ATENDE o cliente reconhecido (tira dúvidas do processo, interpreta termos jurídicos). Pausar logo na primeira interação travaria exatamente o atendimento que ela deveria estar fazendo.
 
 ## Assinatura da Laura
 Toda resposta da Laura termina com:

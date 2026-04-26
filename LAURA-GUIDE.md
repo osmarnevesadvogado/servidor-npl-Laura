@@ -30,6 +30,20 @@ Laura PARA e aguarda o lead responder
 Lead responde → Laura começa a triagem
 ```
 
+## Tom: escutar antes de vender
+
+Princípio de venda consultiva: quem fala demais perde o lead. Os templates de **EMPATIA POR SITUAÇÃO** no prompt foram reescritos pra **acolher + fazer pergunta aberta** em vez de **acolher + vender**. A 2ª frase que antes vendia ("você tem direitos", "valores significativos", "escritório calcula") foi trocada por pergunta aberta específica ao caso:
+
+| Situação | Resposta |
+|---|---|
+| Demissão | "Entendo, [nome]. Ser demitido é muito difícil. **Como foi isso? Te avisaram com antecedência ou foi do nada?**" |
+| Horas extras | "Trabalhar além do horário sem receber o que é justo não está certo. **Quanto tempo a mais você ficava por dia? E recebia algum valor por isso?**" |
+| Falta de registro | "Trabalhar sem carteira gera muitos direitos. **Quanto tempo você trabalhou assim? E hoje, ainda está lá?**" |
+| Acidente/Doença | "Sinto muito por essa situação, [nome]. **Como aconteceu? Você ficou afastado ou continuou trabalhando?**" |
+| Trabalho doméstico | "[nome], desde 2015 trabalhadores domésticos têm os mesmos direitos de qualquer CLT. **Você trabalhou quanto tempo nessa casa? Era todo dia ou alguns dias da semana?**" |
+
+A venda chega depois, na avaliação preliminar — quando a Laura já tem contexto.
+
 ## Triagem (leads novos)
 
 Laura coleta de forma natural (1 pergunta por vez):
@@ -57,20 +71,37 @@ Sinais que indicam que a pessoa JÁ É CLIENTE (Laura NÃO faz triagem):
 
 ## Atendimento Premium (Clientes)
 
-Quando lead vira cliente (`etapa_funil = 'cliente'`):
-1. Servidor envia msg de boas-vindas automaticamente
-2. Laura se apresenta como assistente pessoal dele
-3. Vende o diferencial tech do escritório (Claude AI, IA de ponta)
-4. Avisa que pode errar e que o cliente deve revisar
+**3 caminhos de detecção** acionam o modo premium:
+1. Tabela `clientes` (CRM) com telefone reconhecido
+2. `etapa_funil === 'cliente'` (botão "Salvar Cliente")
+3. Tabela `npl_clientes_processos` (planilha) com nome batendo após confirmação
 
-**O que Laura faz como assistente de cliente:**
-- Tirar dúvidas sobre processo, prazos, termos jurídicos
-- Analisar documentos enviados (holerites, decisões, notificações)
-- Fazer estimativas de cálculos trabalhistas
-- Orientar sobre audiências, preparação
-- Sempre reforça: "posso errar, o advogado confirma"
+### Apresentação na primeira interação como cliente
+Laura se apresenta com tom **empolgado**, vendendo o diferencial:
+> "[nome], que bom falar com você! Sou a Laura, IA do escritório NPL. Tenho uma novidade massa: o NPL investiu em IA de ponta pra te dar atendimento premium 24h por aqui. Você tem **PRIORIDADE DIRETA com nossa equipe de advogados** — se quiser falar com seu advogado, é só me avisar que já aciono pra te dar retorno o quanto antes. E pra dúvidas do dia a dia, prazos, audiências, termos do processo — pode contar comigo. O que você precisa hoje?"
 
-**Notas da equipe**: se o lead tem notas no CRM, Laura usa pra contextualizar. Ex: nota diz "acordo em execução" → Laura informa sem acionar advogado.
+**NÃO repete** a apresentação após a primeira interação.
+
+### O que Laura faz pelo cliente
+1. **Responde sobre o processo** usando os DADOS DOS PROCESSOS da planilha (fase, próxima audiência, prazos, tribunal). **APENAS o que está listado — nunca inventa.**
+2. **Interpreta termos jurídicos básicos** (execução, alvará, trânsito em julgado, perícia, recurso, sentença)
+3. **Orienta sobre audiência** (preparação, o que levar, antecedência)
+4. **Tira dúvidas trabalhistas gerais**
+
+### Quando aciona o advogado
+- Cliente pede explicitamente
+- Pergunta valor / quanto vai receber / quando cai o dinheiro
+- Pergunta sobre acordo, negociação com a empresa
+- Pergunta algo que não está nos DADOS DOS PROCESSOS (não inventa, escala)
+- Cliente nervoso, com pressa, urgência real
+
+Resposta padrão: *"[nome], deixa que aciono [seu/sua] advogad[o/a] agora pra te dar retorno o quanto antes! Aqui no NPL você tem prioridade."* (sistema pausa automaticamente)
+
+### Notas da equipe
+Se o lead tem notas no CRM, Laura usa pra contextualizar. Ex: nota diz "acordo em execução" → Laura informa sem acionar advogado.
+
+### Cliente que volta após agendar
+Se um lead já avançou no funil (`etapa_funil !== 'novo'`) e manda nova mensagem após a conversa anterior fechar, o servidor **PULA** a apresentação programática genérica. Laura responde direto com o contexto que tem (lead.notas com resumo, etapa atual). Antes do fix, ela mandava "Seja bem vindo! Qual seu nome completo?" pra alguém que tinha acabado de agendar — irritava o cliente.
 
 ## Plano B — Desconforto
 
@@ -145,6 +176,7 @@ Dra. Luma, Dra. Sophia, Luiza — desempate aleatório. Luiza: seg/qua/qui manh�
 - Persistidos em metricas (sobrevivem a deploy)
 - Usam instância correta (escritório ou prospecção)
 - No-show verifica se lead respondeu após consulta
+- **Salvos no banco**: helper `enviarLembrete()` envia E chama `db.saveMessage`. Sem esse save, o polling do Datacrazy puxava a msg pelo espelho do número e mostrava no CRM como "Equipe (Datacrazy)" em vez de "Laura IA"
 
 ## Extração de Nomes
 
@@ -156,8 +188,16 @@ Dra. Luma, Dra. Sophia, Luiza — desempate aleatório. Luiza: seg/qua/qui manh�
 ### Regras
 - Emojis removidos do pushName
 - Nomes minúsculos aceitos (4+ letras consecutivas)
-- palavrasComuns filtradas (sim, não, obrigado, etc.)
-- Verbos conjugados filtrados (recebi, mandei, etc.)
+- palavrasComuns filtradas (sim, não, obrigado, **preposições/artigos/pronomes** como "do, da, no, eu, ele, esse")
+- Verbos conjugados filtrados (recebi, mandei, **sou, é, está, fui**)
+
+### Proteção contra frase virar nome
+**Bug clássico:** "sou do Rio de janeiro" → regex 2 com flag `/i` deixava case-insensitive → capturava "do Rio de janeiro" como nome.
+
+**Fix:**
+- Regex 2 sem `/i`: nome capturado precisa começar com maiúscula real
+- `palavrasComuns` ampliada com preposições/artigos/pronomes
+- Upgrade de nome **exige prefix match**: nome novo só sobrescreve nome atual se a primeira palavra bate (ex: "Viviane" pode virar "Viviane Silva", mas não vira "do Rio de janeiro")
 
 ## Erros Comuns que Foram Corrigidos
 
@@ -172,6 +212,15 @@ Dra. Luma, Dra. Sophia, Luiza — desempate aleatório. Luiza: seg/qua/qui manh�
 | Vínculo curto descartado | Bloqueio automático < 3 meses | Removido — Laura explora |
 | Echo do Z-API pausava IA | Janela de dedup 2min | Ampliada pra 5min |
 | Presencial criava evento errado | Template com "[presencial/online]" | Separado: só online usa "Agendado!" |
+| Empatia já vendia na 2ª frase | Templates emendavam "você tem direitos..." logo após acolher | 2ª frase trocada por pergunta aberta — escuta antes de vender |
+| Nome virava frase ("do Rio de janeiro") | Regex `/i` aceitava palavra minúscula como nome | Regex sem `/i` + palavras-stop + prefix match no upgrade |
+| Cliente que volta após agendar recebia "Seja bem vindo!" | `ehPrimeiroContato` só checava history vazio | Agora pula apresentação se `etapa_funil !== 'novo'` |
+| Cliente CRM recebia apresentação genérica | Idem | Pula apresentação se `getContextoCompleto` retornar `cliente` |
+| Pause 24h por simples detecção de cliente | Regra disparava pra qualquer mensagem de cliente | Pause apenas em 2 sinais fortes: nome de advogado OU Laura escalou |
+| Lembretes apareciam como "Equipe (Datacrazy)" | sendText sem saveMessage → Datacrazy puxava pelo espelho | Helper `enviarLembrete()` envia + salva no banco |
+| `/api/chat` ignorava modelo configurado | `claude-sonnet-4-20250514` hardcoded | Agora usa `config.CLAUDE_MODEL` |
+| Timeout do Anthropic virava "dificuldade técnica" | Sem retry | `callClaudeWithRetry` com backoff 2s/4s/8s |
+| Custo alto de input recorrente | System prompt enviado por inteiro a cada call | Prompt caching ativado (`cache_control: ephemeral`), economia ~90% |
 
 ## Arquitetura do Prompt
 
