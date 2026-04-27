@@ -65,109 +65,148 @@ function wasBotRecentSend(phone) {
   return (Date.now() - ts) < 60000;
 }
 
-async function sendText(phone, text, instancia = null) {
-  try {
-    const inst = getInstanceConfig(instancia);
-    const res = await fetch(`${inst.base}/send-text`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Client-Token': inst.clientToken },
-      body: JSON.stringify({ phone: cleanPhone(phone), message: text })
-    });
-    const json = await res.json();
-    if (json.error || json.Error) {
-      console.error(`[ZAPI-NPL] Erro ao enviar msg (${instancia || 'escritorio'}):`, phone, JSON.stringify(json));
-    } else {
-      console.log(`[ZAPI-NPL] Mensagem enviada (${instancia || 'escritorio'}):`, phone);
+// Wrapper com retry exponencial pra Z-API.
+// Erros transitorios (timeout, 5xx, falha de rede) = retenta 3x com backoff 2s/4s/8s.
+// Erros permanentes (4xx — telefone invalido, instancia nao encontrada, payload ruim)
+// = nao retenta, retorna direto.
+const ZAPI_REQUEST_TIMEOUT_MS = 15_000;
+
+async function zapiRequest(url, body, clientToken, label = 'ZAPI', maxRetries = 3) {
+  let ultimoErro = null;
+  let ultimaResp = null;
+
+  for (let tentativa = 1; tentativa <= maxRetries; tentativa++) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Client-Token': clientToken },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(ZAPI_REQUEST_TIMEOUT_MS)
+      });
+
+      // 4xx = erro de cliente, nao retenta
+      if (res.status >= 400 && res.status < 500) {
+        const json = await res.json().catch(() => ({}));
+        console.error(`[${label}] Erro ${res.status} (sem retry):`, JSON.stringify(json).slice(0, 200));
+        return json;
+      }
+
+      // 5xx = erro do servidor, retenta
+      if (res.status >= 500) {
+        ultimaResp = res;
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const json = await res.json();
+      if (json.error || json.Error) {
+        // Z-API as vezes retorna 200 com {error: "..."}. Logar mas nao retentar
+        // (geralmente erro de payload, nao de transporte).
+        console.error(`[${label}] Erro no payload (sem retry):`, JSON.stringify(json).slice(0, 200));
+      }
+      return json;
+
+    } catch (e) {
+      ultimoErro = e;
+      const ehTimeout = e.name === 'TimeoutError' || e.name === 'AbortError';
+      const ehUltima = tentativa === maxRetries;
+      if (ehUltima) {
+        console.error(`[${label}] Falha definitiva apos ${tentativa} tentativa(s):`, e.message);
+        return null;
+      }
+      const delay = 1000 * Math.pow(2, tentativa); // 2s, 4s, 8s
+      console.warn(`[${label}] Tentativa ${tentativa} falhou (${ehTimeout ? 'timeout' : e.message}). Retry em ${delay}ms`);
+      await new Promise(r => setTimeout(r, delay));
     }
-    markBotSent(phone);
-    return json;
-  } catch (e) {
-    console.error('[ZAPI-NPL] Erro ao enviar:', e.message);
-    return null;
   }
+  return null;
+}
+
+async function sendText(phone, text, instancia = null) {
+  const inst = getInstanceConfig(instancia);
+  const json = await zapiRequest(
+    `${inst.base}/send-text`,
+    { phone: cleanPhone(phone), message: text },
+    inst.clientToken,
+    `ZAPI-NPL ${instancia || 'escritorio'}`
+  );
+  if (json && !json.error && !json.Error) {
+    console.log(`[ZAPI-NPL] Mensagem enviada (${instancia || 'escritorio'}):`, phone);
+  }
+  markBotSent(phone);
+  return json;
 }
 
 async function sendAudio(phone, audioBase64, instancia = null) {
-  try {
-    // Z-API exige formato data URI completo (data:audio/ogg;base64,XXXXX)
-    // Se já vem com prefixo, manter. Se é base64 puro, adicionar prefixo.
-    let audioData;
-    if (audioBase64.startsWith('data:')) {
-      audioData = audioBase64;
-    } else {
-      audioData = `data:audio/ogg;base64,${audioBase64}`;
-    }
-    const inst = getInstanceConfig(instancia);
-    const res = await fetch(`${inst.base}/send-audio`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Client-Token': inst.clientToken },
-      body: JSON.stringify({ phone: cleanPhone(phone), audio: audioData })
-    });
-    const json = await res.json();
-    if (json.error || json.Error) {
-      console.error(`[ZAPI-NPL] Erro ao enviar áudio (${instancia || 'escritorio'}):`, JSON.stringify(json));
-    } else {
-      console.log(`[ZAPI-NPL] Áudio enviado (${instancia || 'escritorio'}):`, phone);
-    }
-    markBotSent(phone);
-    return json;
-  } catch (e) {
-    console.error('[ZAPI-NPL] Erro ao enviar áudio:', e.message);
-    return null;
+  // Z-API exige formato data URI completo (data:audio/ogg;base64,XXXXX)
+  // Se já vem com prefixo, manter. Se é base64 puro, adicionar prefixo.
+  const audioData = audioBase64.startsWith('data:')
+    ? audioBase64
+    : `data:audio/ogg;base64,${audioBase64}`;
+  const inst = getInstanceConfig(instancia);
+  const json = await zapiRequest(
+    `${inst.base}/send-audio`,
+    { phone: cleanPhone(phone), audio: audioData },
+    inst.clientToken,
+    `ZAPI-NPL ${instancia || 'escritorio'} audio`
+  );
+  if (json && !json.error && !json.Error) {
+    console.log(`[ZAPI-NPL] Áudio enviado (${instancia || 'escritorio'}):`, phone);
   }
+  markBotSent(phone);
+  return json;
 }
 
 async function sendImage(phone, imageUrl, caption = '', instancia = null) {
-  try {
-    const inst = getInstanceConfig(instancia);
-    const res = await fetch(`${inst.base}/send-image`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Client-Token': inst.clientToken },
-      body: JSON.stringify({ phone: cleanPhone(phone), image: imageUrl, caption })
-    });
-    const json = await res.json();
+  const inst = getInstanceConfig(instancia);
+  const json = await zapiRequest(
+    `${inst.base}/send-image`,
+    { phone: cleanPhone(phone), image: imageUrl, caption },
+    inst.clientToken,
+    `ZAPI-NPL ${instancia || 'escritorio'} image`
+  );
+  if (json && !json.error && !json.Error) {
     console.log(`[ZAPI-NPL] Imagem enviada (${instancia || 'escritorio'}):`, phone);
-    markBotSent(phone);
-    return json;
-  } catch (e) {
-    console.error('[ZAPI-NPL] Erro ao enviar imagem:', e.message);
-    return null;
   }
+  markBotSent(phone);
+  return json;
 }
 
 async function sendDocument(phone, documentUrl, fileName = 'arquivo.pdf', instancia = null) {
-  try {
-    const ext = fileName.split('.').pop() || 'pdf';
-    const inst = getInstanceConfig(instancia);
-    const res = await fetch(`${inst.base}/send-document/${ext}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Client-Token': inst.clientToken },
-      body: JSON.stringify({ phone: cleanPhone(phone), document: documentUrl, fileName })
-    });
-    const json = await res.json();
+  const ext = fileName.split('.').pop() || 'pdf';
+  const inst = getInstanceConfig(instancia);
+  const json = await zapiRequest(
+    `${inst.base}/send-document/${ext}`,
+    { phone: cleanPhone(phone), document: documentUrl, fileName },
+    inst.clientToken,
+    `ZAPI-NPL ${instancia || 'escritorio'} document`
+  );
+  if (json && !json.error && !json.Error) {
     console.log(`[ZAPI-NPL] Documento enviado (${instancia || 'escritorio'}):`, phone, fileName);
-    markBotSent(phone);
-    return json;
-  } catch (e) {
-    console.error('[ZAPI-NPL] Erro ao enviar documento:', e.message);
-    return null;
   }
+  markBotSent(phone);
+  return json;
 }
 
 async function notifyHotLead(leadName, phone, trigger, instancia = null) {
-  const msg = `LEAD QUENTE - NPL TRABALHISTA!\n\n${leadName} (${phone}) demonstrou interesse alto.\n\nFrase: "${trigger}"\n\nResponda rapido ou a Laura continua o atendimento.`;
-  try {
-    const inst = getInstanceConfig(instancia);
-    await fetch(`${inst.base}/send-text`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Client-Token': inst.clientToken },
-      body: JSON.stringify({ phone: config.OSMAR_PHONE, message: msg })
-    });
-    markBotSent(config.OSMAR_PHONE); // evita que o echo pause a IA do Dr. Osmar
-    console.log(`[HOT-NPL] Notificação enviada sobre ${leadName}`);
-  } catch (e) {
-    console.error('[HOT-NPL] Erro ao notificar:', e.message);
+  if (!config.OSMAR_PHONE) {
+    console.warn('[HOT-NPL] OSMAR_PHONE nao configurado, notificacao ignorada');
+    return null;
   }
+  const msg = `LEAD QUENTE - NPL TRABALHISTA!\n\n${leadName} (${phone}) demonstrou interesse alto.\n\nFrase: "${trigger}"\n\nResponda rapido ou a Laura continua o atendimento.`;
+  const inst = getInstanceConfig(instancia);
+  const json = await zapiRequest(
+    `${inst.base}/send-text`,
+    { phone: config.OSMAR_PHONE, message: msg },
+    inst.clientToken,
+    `HOT-NPL`
+  );
+  markBotSent(config.OSMAR_PHONE); // evita que o echo pause a IA do Dr. Osmar
+  if (json && !json.error && !json.Error) {
+    console.log(`[HOT-NPL] Notificação enviada sobre ${leadName}`);
+  } else {
+    console.error(`[HOT-NPL] Falha ao notificar sobre ${leadName} (resposta:`, JSON.stringify(json || {}).slice(0, 150), ')');
+  }
+  return json;
 }
 
 // Detectar qual instância pelo instanceId do payload da Z-API
