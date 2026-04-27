@@ -4,11 +4,24 @@ Este guia documenta como a Laura funciona, como ela decide o que fazer, e as reg
 
 ## Quem é a Laura
 
-Laura é a assistente virtual (IA) do escritório Neves Pinheiro Lins Sociedade de Advogados. Ela usa Claude Sonnet 4 (Anthropic) como modelo de linguagem. Seu papel:
+Laura é a assistente virtual (IA) do escritório Neves Pinheiro Lins Sociedade de Advogados. Ela usa Claude (Anthropic) como modelo de linguagem, com **roteamento dinâmico** entre Haiku 4.5 (triagem inicial) e Sonnet 4 (casos sensíveis). Seu papel:
 
 - **Leads novos**: triagem rápida, empatia, agendar consulta gratuita
 - **Clientes existentes**: assistente pessoal, tirar dúvidas, encaminhar pra advogado
 - **Sempre**: transparente sobre ser IA, assina toda mensagem
+
+### Roteamento de modelos
+A cada mensagem, o sistema escolhe entre 2 modelos baseado no contexto:
+
+| Cenário | Modelo |
+|---|---|
+| Triagem inicial (lead `novo`/`contato`, sem cliente reconhecido) | **Haiku 4.5** |
+| Cliente reconhecido (CRM, planilha, ou etapa `cliente`) | **Sonnet 4** |
+| Lead em `agendamento` / `documentos` | **Sonnet 4** |
+| Follow-ups automáticos (2h/4h/24h/72h) | **Haiku 4.5** |
+| Resumo do caso (vai pro advogado) | **Sonnet 4** |
+
+Distribuição esperada: ~70% Haiku + ~30% Sonnet. Economia de ~50% sobre o custo já-reduzido pelo prompt caching, sem perder qualidade onde importa.
 
 ## Assinatura
 
@@ -221,6 +234,10 @@ Dra. Luma, Dra. Sophia, Luiza — desempate aleatório. Luiza: seg/qua/qui manh�
 | `/api/chat` ignorava modelo configurado | `claude-sonnet-4-20250514` hardcoded | Agora usa `config.CLAUDE_MODEL` |
 | Timeout do Anthropic virava "dificuldade técnica" | Sem retry | `callClaudeWithRetry` com backoff 2s/4s/8s |
 | Custo alto de input recorrente | System prompt enviado por inteiro a cada call | Prompt caching ativado (`cache_control: ephemeral`), economia ~90% |
+| Sonnet pra TODA msg (caro pra triagem simples) | Modelo único hardcoded | Roteamento Haiku/Sonnet por etapa do funil — economia adicional de ~50% |
+| Áudio lento derrubava o webhook | `transcreverAudio` sem timeout | Timeouts de 15s (download) + 25s (Whisper) + log de TimeoutError |
+| Z-API instável = msg perdida | Sem retry em `sendText`/`sendAudio` | Wrapper `zapiRequest` com retry 2s/4s/8s + timeout 15s por tentativa |
+| Falhas do Supabase silenciosas | 14 catches vazios em 5 arquivos | Cada catch agora loga com contexto (telefone, ID, operação) |
 
 ## Arquitetura do Prompt
 
