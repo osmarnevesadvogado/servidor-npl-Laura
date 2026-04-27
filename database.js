@@ -66,7 +66,7 @@ async function saveMessage(conversaId, role, content, extra = {}) {
 async function getHistory(conversaId, limit = 500) {
   const { data: msgs } = await supabase
     .from('mensagens')
-    .select('role, content')
+    .select('role, content, manual, usuario_nome, criado_em')
     .eq('conversa_id', conversaId)
     .order('criado_em', { ascending: true })
     .limit(limit);

@@ -791,11 +791,59 @@ async function generateResponse(history, userMessage, conversaId, lead, contexto
     console.error('[IA-NPL] Erro ao montar abSection (A/B testing):', e.message);
   }
 
+  // ===== DETECCAO DE RETOMADA APOS ATENDIMENTO HUMANO =====
+  // Se a equipe (atendente humano via CRM/Datacrazy) esteve respondendo este lead
+  // recentemente, a Laura precisa RETOMAR a conversa com contexto, nao agir como se
+  // estivesse comecando do zero. Cobre 2 cenarios:
+  //   1. Toggle global Laura ON apos equipe ter atendido durante OFF
+  //   2. Pause individual expirou e a equipe tinha respondido manualmente
+  let retomadaSection = '';
+  try {
+    const ultimasAssistant = (history || []).filter(m => m.role === 'assistant').slice(-10);
+    const msgsManuais = ultimasAssistant.filter(m => m.manual === true);
+    if (msgsManuais.length > 0) {
+      // Pegar nomes unicos dos atendentes que falaram
+      const atendentes = [...new Set(
+        msgsManuais.map(m => m.usuario_nome).filter(n => n && n !== 'CRM' && n !== 'Equipe (Datacrazy)')
+      )];
+      const ultimaManual = msgsManuais[msgsManuais.length - 1];
+      const assistantTotal = ultimasAssistant.length;
+      const proporcaoManual = msgsManuais.length / assistantTotal;
+      // So entra modo retomada se a equipe foi PROTAGONISTA recente (>30% das ultimas
+      // msgs do assistente foram manuais, OU a ultima msg do assistente foi manual)
+      const ultimaFoiManual = ultimasAssistant[ultimasAssistant.length - 1]?.manual === true;
+      if (ultimaFoiManual || proporcaoManual >= 0.3) {
+        const trechoUltima = (ultimaManual.content || '').slice(0, 200);
+        const quemFalou = atendentes.length > 0
+          ? `da equipe (${atendentes.join(', ')})`
+          : 'da equipe';
+        retomadaSection = `
+ATENCAO — RETOMADA DE CONVERSA:
+A equipe humana ${quemFalou} esteve atendendo este lead manualmente. Voce esta voltando a responder agora.
+
+REGRAS OBRIGATORIAS:
+- NAO se reapresente como Laura. O lead ja conversou — voce esta CONTINUANDO.
+- LEIA TODO o resumo da conversa abaixo pra entender o contexto antes de escrever.
+- NAO refaca triagem (nome, tempo de empresa, carteira, etc) se ja foi conversado.
+- Reconheca a passagem da equipe pelo atendimento. Algo como: "[nome], voltei aqui pra te ajudar! Vi que voce estava conversando com a nossa equipe sobre [resumo do que foi discutido]. [continua de onde parou ou pergunta o que precisa]"
+- NAO invente o que a equipe falou. Se nao estiver claro no historico, diga "vi que a equipe esteve aqui — em que posso te ajudar agora?"
+- Se a equipe deixou uma pergunta em aberto, PRIORIZE retomar essa pergunta.
+
+ULTIMA MENSAGEM DA EQUIPE: "${trechoUltima}"
+`;
+        console.log(`[IA-NPL] Retomada detectada (atendentes: ${atendentes.join(', ') || 'sem nome'}, ${msgsManuais.length}/${assistantTotal} msgs manuais)`);
+      }
+    }
+  } catch (e) {
+    console.error('[IA-NPL] Erro ao detectar retomada:', e.message);
+  }
+
   const fichaCompleta = `===== FICHA DO LEAD (CONSULTE ANTES DE RESPONDER) =====
 ${fichaLead}
 ${agendaSection}
 ${abSection}
 ${licoesTexto}
+${retomadaSection}
 =========================
 
 Mensagem do lead: "${userMessage}"
