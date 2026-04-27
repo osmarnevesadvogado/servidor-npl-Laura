@@ -58,9 +58,20 @@ async function updateConversa(conversaId, updates) {
 // ===== MENSAGENS =====
 
 async function saveMessage(conversaId, role, content, extra = {}) {
-  await supabase
+  // Captura {error} do Supabase pra evitar falhas silenciosas (RLS, schema,
+  // network). Antes a funcao engolia tudo e o caller assumia sucesso.
+  const { data, error } = await supabase
     .from('mensagens')
-    .insert({ conversa_id: conversaId, role, content, ...extra });
+    .insert({ conversa_id: conversaId, role, content, ...extra })
+    .select('id')
+    .single();
+  if (error) {
+    console.error(`[DB-NPL] Falha ao salvar mensagem (conv=${conversaId}, role=${role}, len=${(content || '').length}):`, error.message || error);
+    if (error.details) console.error('[DB-NPL] details:', error.details);
+    if (error.hint) console.error('[DB-NPL] hint:', error.hint);
+    throw new Error(`saveMessage falhou: ${error.message || 'erro desconhecido'}`);
+  }
+  return data;
 }
 
 async function getHistory(conversaId, limit = 1000) {

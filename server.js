@@ -265,6 +265,21 @@ const MEDIA_TYPES = [
   { keys: ['video', 'videoMessage'], urlKeys: ['videoUrl', 'url', 'mediaUrl'], type: 'video', fallback: '[Vídeo]' }
 ];
 
+// Tipos de payload Z-API que NAO sao image/audio/document/video mas ainda
+// trazem mensagem do lead — precisam virar placeholder pra equipe ver no CRM.
+// Ex: sticker (figurinha), location, contact, reaction, viewOnce (visualizacao
+// unica), poll, order, liveLocation, ou qualquer "Mensagem nao suportada pela Meta".
+const TIPOS_NAO_SUPORTADOS_HINTS = [
+  'sticker', 'stickerMessage',
+  'location', 'locationMessage', 'liveLocation', 'liveLocationMessage',
+  'contact', 'contactMessage', 'contacts', 'contactsArrayMessage',
+  'reaction', 'reactionMessage',
+  'viewOnce', 'viewOnceMessage', 'viewOnceMessageV2',
+  'poll', 'pollMessage', 'pollCreationMessage', 'pollUpdateMessage',
+  'order', 'orderMessage', 'product', 'productMessage',
+  'unsupported', 'unsupportedMessage', 'unknown'
+];
+
 function extrairTextoEMidia(body) {
   let text = body.text?.message || body.body || '';
   let mediaUrl = null;
@@ -276,8 +291,38 @@ function extrairTextoEMidia(body) {
     mediaType = def.type;
     const caption = (def.captionKeys || ['caption']).map(k => obj[k]).find(Boolean);
     text = caption || text || def.fallback;
-    break;
+    return { text, mediaUrl, mediaType };
   }
+
+  // Nenhum tipo padrao bateu E nao tem texto puro — pode ser tipo nao suportado
+  // pela Meta (sticker, location, contact, viewOnce, etc) que cai silente hoje.
+  // Detecta isso checando se o body tem alguma chave caracteristica de "mensagem"
+  // que nao seja uma das ja tratadas.
+  if (!text) {
+    const ehMensagemRecebida = body.type === 'ReceivedCallback'
+      || body.fromMe === false
+      || body.isFromMe === false
+      || body.messageId
+      || body.phone;
+    if (ehMensagemRecebida) {
+      const camposMidiaJaTratados = new Set(MEDIA_TYPES.flatMap(d => d.keys));
+      const camposSuspeitos = Object.keys(body).filter(k => {
+        if (camposMidiaJaTratados.has(k)) return false;
+        const lower = k.toLowerCase();
+        // Chaves que parecem mensagem/midia (heuristica defensiva)
+        if (TIPOS_NAO_SUPORTADOS_HINTS.includes(k)) return true;
+        if (lower.includes('message') && !['text', 'messageid'].includes(lower)) return true;
+        if (lower.includes('media')) return true;
+        return false;
+      });
+      if (camposSuspeitos.length > 0) {
+        mediaType = 'unknown';
+        text = `⚠️ Mensagem de tipo nao suportado pela Meta — verifique no WhatsApp original (campos: ${camposSuspeitos.join(', ')})`;
+        console.warn(`[WEBHOOK-NPL] Tipo de msg desconhecido detectado (phone=${body.phone}, campos=${camposSuspeitos.join(',')})`);
+      }
+    }
+  }
+
   return { text, mediaUrl, mediaType };
 }
 
@@ -1629,6 +1674,9 @@ app.post('/webhook/zapi', async (req, res) => {
     // Número 01 (escritório): Laura silenciosa durante horário comercial
     if (instancia === 'escritorio' && !isFromMe && await whatsapp.isHorarioComercial()) {
       const phone = body.phone || body.from?.replace('@c.us', '') || '';
+      // saveStatus reflete o que REALMENTE aconteceu — nao mais log mentindo
+      // 'msg salva' quando o INSERT nem foi tentado.
+      let saveStatus = 'sem-telefone';
       if (phone) {
         try {
           const senderName = whatsapp.limparNomeContato(body.senderName || body.pushName || body.notifyName || body.chatName || '');
@@ -1650,19 +1698,29 @@ app.post('/webhook/zapi', async (req, res) => {
           const textoPuro = body.text?.message || body.body || '';
           const textoFinal = mediaType ? (mediaText || `[${mediaType}]`) : textoPuro;
 
-          if (textoFinal && conversa) {
+          if (!conversa) {
+            saveStatus = 'sem-conversa';
+          } else if (!textoFinal && !mediaUrl) {
+            saveStatus = 'sem-conteudo';
+            console.warn(`[ESCRITORIO-NPL] Webhook sem texto E sem mídia (phone=${phone}, body keys=${Object.keys(body).join(',')})`);
+          } else {
+            // Garante content nunca vazio — INSERT precisa de algo
+            const finalContent = textoFinal || `[${mediaType || 'mídia'}]`;
             const extras = {};
             if (mediaUrl) extras.media_url = mediaUrl;
             if (mediaType) extras.media_type = mediaType;
-            await db.saveMessage(conversa.id, 'user', textoFinal, extras);
-            if (!mediaType) await db.extractAndUpdateLead(lead.id, textoFinal);
+            await db.saveMessage(conversa.id, 'user', finalContent, extras);
+            saveStatus = mediaType === 'unknown' ? 'salvo-tipo-desconhecido' : 'salvo';
+            if (!mediaType) await db.extractAndUpdateLead(lead.id, finalContent);
           }
         } catch (e) {
-          console.log('[ESCRITORIO-NPL] Erro:', e.message);
+          saveStatus = 'FALHA';
+          console.error(`[ESCRITORIO-NPL] Erro ao salvar msg de ${phone}:`, e.message);
+          if (e.stack) console.error(e.stack);
         }
       }
-      console.log(`[ESCRITORIO-NPL] Horario comercial - msg salva sem IA: ${phone}`);
-      return res.json({ status: 'office_hours' });
+      console.log(`[ESCRITORIO-NPL] Horario comercial - phone=${phone} status=${saveStatus}`);
+      return res.json({ status: 'office_hours', save: saveStatus });
     }
 
     if (isFromMe) {
@@ -3121,6 +3179,176 @@ app.get('/api/auditoria/telefone/:phone', requireApiKey, auditAccess('read', 'le
   } catch (e) {
     console.error('[AUDITORIA-TELEFONE] Erro:', e.message);
     res.status(500).json({ error: 'Erro na auditoria', detalhe: e.message });
+  }
+});
+
+// ===== ADMIN: RECUPERAR MIDIAS PERDIDAS DA DATACRAZY =====
+// Ferramenta unica pra reaver midias do cliente que nao foram salvas no Supabase.
+// O syncDatacrazy normal filtra `!m.received` (so msgs ENVIADAS pela equipe) e
+// `m.body.trim().length > 0` (so com texto), entao midia recebida do cliente
+// nunca foi puxada — ainda esta na Datacrazy.
+//
+// Uso: POST /api/admin/recuperar-midia-datacrazy { phone: "559182209267", dias?: 30 }
+// Header: x-api-key
+//
+// Comportamento:
+// 1. Acha conversation.id na Datacrazy filtrando por phone
+// 2. Busca todas as msgs (take=500)
+// 3. Filtra msgs RECEBIDAS (m.received === true) com indicador de midia
+// 4. Insere no Supabase as que ainda nao existem (dedup ±60s por timestamp)
+//
+// Loga payload bruto da PRIMEIRA msg processada pra inspecao manual de campos.
+app.post('/api/admin/recuperar-midia-datacrazy', requireApiKey, async (req, res) => {
+  if (!config.DATACRAZY_API_TOKEN) {
+    return res.status(503).json({ error: 'DATACRAZY_API_TOKEN nao configurado' });
+  }
+  const { phone, dias = 30 } = req.body || {};
+  if (!phone) return res.status(400).json({ error: 'phone obrigatorio' });
+
+  const phoneLimpo = String(phone).replace(/\D/g, '');
+  const headers = {
+    'Authorization': `Bearer ${config.DATACRAZY_API_TOKEN}`,
+    'Content-Type': 'application/json'
+  };
+  const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000);
+
+  try {
+    // 1) Achar conversa(s) Datacrazy desse telefone
+    const convResp = await fetch(
+      `https://api.g1.datacrazy.io/api/v1/conversations?take=200`,
+      { headers, signal: AbortSignal.timeout(15000) }
+    );
+    if (!convResp.ok) {
+      return res.status(502).json({ error: `Datacrazy /conversations HTTP ${convResp.status}` });
+    }
+    const convData = await convResp.json();
+    const allConvs = convData.conversations || convData.data || [];
+    const variantesPhone = new Set([phoneLimpo]);
+    if (phoneLimpo.startsWith('55')) variantesPhone.add(phoneLimpo.slice(2));
+    if (!phoneLimpo.startsWith('55')) variantesPhone.add('55' + phoneLimpo);
+    if (phoneLimpo.length === 12 && /^55\d{2}[2-9]/.test(phoneLimpo)) {
+      variantesPhone.add(phoneLimpo.slice(0, 4) + '9' + phoneLimpo.slice(4));
+    }
+    if (phoneLimpo.length === 13 && /^55\d{2}9/.test(phoneLimpo)) {
+      variantesPhone.add(phoneLimpo.slice(0, 4) + phoneLimpo.slice(5));
+    }
+
+    const convsDoCliente = allConvs.filter(c => {
+      const p = String(c.contact?.phoneNumber || c.contact?.contactId || '').replace(/\D/g, '');
+      return variantesPhone.has(p);
+    });
+
+    if (convsDoCliente.length === 0) {
+      return res.json({
+        ok: true,
+        recuperadas: 0,
+        skip_existentes: 0,
+        msg: `Nenhuma conversa Datacrazy encontrada pra ${phone} (variantes testadas: ${[...variantesPhone].join(', ')})`,
+        conversations_total: allConvs.length
+      });
+    }
+
+    // Conversa do nosso lado
+    const conversaSupabase = await db.getOrCreateConversa(phoneLimpo);
+
+    let recuperadas = 0;
+    let skipExistentes = 0;
+    let primeiroPayloadLogado = false;
+    const exemplosCampos = [];
+
+    for (const conv of convsDoCliente) {
+      const msgsResp = await fetch(
+        `https://api.g1.datacrazy.io/api/v1/conversations/${conv.id}/messages?take=500`,
+        { headers, signal: AbortSignal.timeout(20000) }
+      );
+      if (!msgsResp.ok) {
+        console.warn(`[RECUPERA] Conv ${conv.id} HTTP ${msgsResp.status}`);
+        continue;
+      }
+      const msgsData = await msgsResp.json();
+      const mensagens = msgsData.messages || msgsData.data || [];
+
+      // Filtra recebidas (do cliente) com algum indicador de midia.
+      // Como nao temos o schema confirmado, aceita varias possibilidades:
+      const recebidasComMidia = mensagens.filter(m => {
+        if (m.received !== true) return false;
+        const created = new Date(m.createdAt || m.created_at || 0);
+        if (created < desde) return false;
+        // Indicador de midia (tenta varios campos)
+        return !!(
+          m.mediaUrl || m.media_url ||
+          (m.attachments && m.attachments.length > 0) ||
+          (m.type && m.type !== 'text' && m.type !== 'TEXT') ||
+          m.fileUrl || m.file_url ||
+          m.mimeType || m.mime_type ||
+          m.imageUrl || m.documentUrl || m.audioUrl || m.videoUrl
+        );
+      });
+
+      // Loga payload bruto da PRIMEIRA msg pra inspecao
+      if (!primeiroPayloadLogado && recebidasComMidia.length > 0) {
+        console.log('[RECUPERA] Payload bruto da 1a msg (inspecao):', JSON.stringify(recebidasComMidia[0], null, 2));
+        primeiroPayloadLogado = true;
+        exemplosCampos.push(Object.keys(recebidasComMidia[0]));
+      }
+
+      for (const m of recebidasComMidia) {
+        const url = m.mediaUrl || m.media_url || m.fileUrl || m.file_url
+          || m.imageUrl || m.documentUrl || m.audioUrl || m.videoUrl
+          || (m.attachments && m.attachments[0]?.url);
+        const tipoBruto = (m.type || '').toLowerCase();
+        const mime = (m.mimeType || m.mime_type || '').toLowerCase();
+        let mediaType = 'document';
+        if (tipoBruto.includes('image') || mime.startsWith('image/')) mediaType = 'image';
+        else if (tipoBruto.includes('audio') || mime.startsWith('audio/')) mediaType = 'audio';
+        else if (tipoBruto.includes('video') || mime.startsWith('video/')) mediaType = 'video';
+        else if (tipoBruto.includes('document') || mime.includes('pdf') || mime.includes('officedocument')) mediaType = 'document';
+
+        const descritivo = m.body && m.body.trim().length > 0
+          ? m.body.trim()
+          : (mediaType === 'image' ? '📷 Imagem recuperada da Datacrazy'
+            : mediaType === 'audio' ? '🎤 Audio recuperado da Datacrazy'
+            : mediaType === 'video' ? '🎬 Video recuperado da Datacrazy'
+            : '📄 Documento recuperado da Datacrazy');
+
+        const createdAt = new Date(m.createdAt || m.created_at || Date.now());
+
+        // Dedup: ja existe msg com mesmo timestamp ±60s nessa conversa?
+        const { data: dup } = await db.supabase
+          .from('mensagens')
+          .select('id, content, media_url')
+          .eq('conversa_id', conversaSupabase.id)
+          .gte('criado_em', new Date(createdAt.getTime() - 60000).toISOString())
+          .lte('criado_em', new Date(createdAt.getTime() + 60000).toISOString())
+          .limit(20);
+        const existe = (dup || []).some(d => (d.media_url && url && d.media_url === url) || (d.content && descritivo && d.content === descritivo));
+        if (existe) { skipExistentes++; continue; }
+
+        try {
+          await db.saveMessage(conversaSupabase.id, 'user', descritivo, {
+            media_url: url || null,
+            media_type: mediaType,
+            criado_em: createdAt.toISOString()
+          });
+          recuperadas++;
+        } catch (e) {
+          console.error(`[RECUPERA] Falha ao inserir msg (created=${createdAt.toISOString()}):`, e.message);
+        }
+      }
+    }
+
+    console.log(`[RECUPERA] phone=${phoneLimpo} recuperadas=${recuperadas} skip_existentes=${skipExistentes}`);
+    res.json({
+      ok: true,
+      phone: phoneLimpo,
+      conversations_datacrazy: convsDoCliente.length,
+      recuperadas,
+      skip_existentes: skipExistentes,
+      campos_observados: exemplosCampos
+    });
+  } catch (e) {
+    console.error('[RECUPERA] Erro:', e.message, e.stack);
+    res.status(500).json({ error: 'Erro na recuperacao', detalhe: e.message });
   }
 });
 
