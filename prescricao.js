@@ -2,7 +2,21 @@
 // Detecta "há quanto tempo saiu" na conversa, calcula tempo restante até 2 anos
 // e formata alerta para injetar na ficha do lead.
 
-// Extrai "saiu há X meses/anos" / "saí da empresa em <data>" do texto
+// Mapa de meses em portugues
+const MESES_PT = {
+  jan: 0, janeiro: 0, fev: 1, fevereiro: 1, mar: 2, marco: 2, 'março': 2,
+  abr: 3, abril: 3, mai: 4, maio: 4, jun: 5, junho: 5,
+  jul: 6, julho: 6, ago: 7, agosto: 7, set: 8, setembro: 8,
+  out: 9, outubro: 9, nov: 10, novembro: 10, dez: 11, dezembro: 11
+};
+
+function mesesEntre(dataAntiga, dataAtual = new Date()) {
+  const anos = dataAtual.getFullYear() - dataAntiga.getFullYear();
+  const meses = dataAtual.getMonth() - dataAntiga.getMonth();
+  return anos * 12 + meses;
+}
+
+// Extrai "saiu há X meses/anos" / "saí da empresa em <data>" / "trabalhei até <data>" do texto
 function extrairTempoSaida(texto) {
   if (!texto) return null;
   const lower = texto.toLowerCase();
@@ -27,6 +41,24 @@ function extrairTempoSaida(texto) {
     const anos = parseInt(m2[2]);
     const mesesExtra = m2[3] ? parseInt(m2[3]) : 0;
     return { mesesDesdeSaida: anos * 12 + mesesExtra, trechoOriginal: m2[0] };
+  }
+
+  // "saí em mar/2024" / "trabalhei até dezembro de 2023" / "ultimo dia foi janeiro 2024"
+  // Captura mes + ano. Importante pra audios transcritos onde o lead fala datas
+  // ao inves de "ha X meses".
+  const padraoData = /(?:sa[ií]|parei|me desliguei|me mandaram|me demitiram|fui demitid[oa]|encerrei|trabalhei at[eé]|terminei|[uú]ltimo dia)\b[^.]{0,40}?\b(jan(?:eiro)?|fev(?:ereiro)?|mar(?:[çc]o)?|abr(?:il)?|mai(?:o)?|jun(?:ho)?|jul(?:ho)?|ago(?:sto)?|set(?:embro)?|out(?:ubro)?|nov(?:embro)?|dez(?:embro)?)\b[\s\.\/]{0,5}(?:de\s+)?(\d{4})/i;
+  const m3 = texto.match(padraoData);
+  if (m3) {
+    const mesNome = m3[1].toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const ano = parseInt(m3[2]);
+    const mesIdx = MESES_PT[mesNome] ?? MESES_PT[mesNome.slice(0, 3)];
+    if (mesIdx != null && ano >= 2000 && ano <= new Date().getFullYear() + 1) {
+      const dataSaida = new Date(ano, mesIdx, 15); // dia 15 do mes (meio do mes pra reduzir off-by-one)
+      const meses = mesesEntre(dataSaida);
+      if (meses >= 0) {
+        return { mesesDesdeSaida: meses, trechoOriginal: m3[0], dataSaida: dataSaida.toISOString().slice(0, 10) };
+      }
+    }
   }
 
   // "ainda trabalho" / "estou na empresa" — sem risco de prescrição
