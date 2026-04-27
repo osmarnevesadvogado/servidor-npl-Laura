@@ -576,11 +576,13 @@ function buildFichaLead(lead, history, contexto) {
     }
   }
 
-  // Resumo da conversa anterior (lead + Laura) para contexto completo
+  // Resumo da conversa anterior (lead + Laura) para contexto completo.
+  // Janela ampla — Laura precisa do contexto inteiro pra retomada apos atendimento
+  // humano. Trecho de cada msg cortado em 200 chars pra evitar prompt gigante.
   if (history && history.length >= 2) {
     const resumo = [];
-    for (const m of history.slice(-40)) {
-      const autor = m.role === 'user' ? 'Lead' : 'Laura';
+    for (const m of history.slice(-120)) {
+      const autor = m.role === 'user' ? 'Lead' : (m.manual ? `Equipe${m.usuario_nome ? ' (' + m.usuario_nome + ')' : ''}` : 'Laura');
       resumo.push(`${autor}: ${m.content.slice(0, 200)}`);
     }
     if (resumo.length > 0) {
@@ -744,7 +746,10 @@ function trimResponse(text) {
 
 // ===== HISTÓRICO =====
 function buildRecentHistory(history) {
-  const recent = history.slice(-150);
+  // Janela ampla pra Laura ter contexto completo da conversa, mesmo apos a equipe
+  // ter atendido por dias. Custo extra de input eh mitigado pelo prompt caching
+  // — o ganho de qualidade (Laura nao perdendo o fio) compensa.
+  const recent = history.slice(-500);
   return recent
     .map(m => ({ role: m.role, content: (m.content || '').toString() }))
     .filter(m => m.content.trim().length > 0);
@@ -906,10 +911,17 @@ async function generateFollowUp(history, lead, followUpNumber) {
   const nome = (lead && lead.nome && !lead.nome.startsWith('WhatsApp')) ? lead.nome : 'amigo(a)';
   const detalhe = lead?.notas || 'questao trabalhista';
 
-  // Incluir TANTO msgs do lead QUANTO da Laura — pra IA ver se já dispensou
+  // Incluir lead + Laura + Equipe humana — pra IA ver toda a conversa antes
+  // de gerar follow-up (evita contradizer dispensa, evita reabordar caso ja
+  // tratado pela equipe).
   const conversaRecente = (history || [])
-    .slice(-15)
-    .map(m => `${m.role === 'user' ? 'LEAD' : 'LAURA'}: ${m.content.slice(0, 200)}`)
+    .slice(-30)
+    .map(m => {
+      const autor = m.role === 'user'
+        ? 'LEAD'
+        : (m.manual ? `EQUIPE${m.usuario_nome ? ' (' + m.usuario_nome + ')' : ''}` : 'LAURA');
+      return `${autor}: ${m.content.slice(0, 200)}`;
+    })
     .join('\n');
 
   const prompt = `Voce e a Laura, assistente do escritorio NPLADVS (especializado em trabalhista, Belem/PA).
@@ -965,8 +977,13 @@ async function gerarResumoCaso(historico, lead) {
 
   const conversaTexto = historico
     .filter(m => m.role === 'user' || m.role === 'assistant')
-    .slice(-40)
-    .map(m => `${m.role === 'user' ? 'LEAD' : 'LAURA'}: ${m.content}`)
+    .slice(-100)
+    .map(m => {
+      const autor = m.role === 'user'
+        ? 'LEAD'
+        : (m.manual ? `EQUIPE${m.usuario_nome ? ' (' + m.usuario_nome + ')' : ''}` : 'LAURA');
+      return `${autor}: ${m.content}`;
+    })
     .join('\n');
 
   const prompt = `Voce e um assistente juridico especializado em direito trabalhista. Analise a conversa abaixo entre a Laura (IA de triagem) e um lead do escritorio NPLADVS, e gere um RESUMO EXECUTIVO para o advogado que vai atender a consulta.

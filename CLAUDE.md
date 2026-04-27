@@ -91,8 +91,9 @@ O CRM frontend (hospedado no GitHub Pages, repositório `npladvs-crm`) chama dir
 - **Claude Haiku 4.5** (`config.CLAUDE_MODEL_TRIAGEM` = claude-haiku-4-5-20251001) — triagem inicial e follow-ups
 - **Claude Opus 4.7** — extração estruturada de PDF (documentos.js, pontual)
 - MAX_TOKENS: 800 (respostas objetivas)
-- Janela de contexto: 150 mensagens enviadas ao Claude
-- Ficha do lead: 40 mensagens anteriores resumidas
+- Janela de contexto: **500 mensagens** enviadas ao Claude (`buildRecentHistory`)
+- Ficha do lead: 120 mensagens anteriores no resumo, identificando autor (Lead / Laura / Equipe + nome do atendente)
+- Limite do banco: `getHistory(limit=1000)` — buffer de segurança
 - trimResponse: máx 8 frases
 
 ### Roteamento Haiku/Sonnet (`escolherModelo` em ia.js)
