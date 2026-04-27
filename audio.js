@@ -37,6 +37,12 @@ function isUrlSegura(url) {
 }
 
 // ===== TRANSCREVER ÁUDIO (Whisper — OpenAI) =====
+// Timeouts: 15s pra baixar o audio do Z-API, 25s pra Whisper transcrever.
+// Render mata request inteira em 30s — sem esses timeouts, audio lento
+// derrubava o webhook todo.
+const DOWNLOAD_TIMEOUT_MS = 15_000;
+const WHISPER_TIMEOUT_MS = 25_000;
+
 async function transcreverAudio(audioUrl) {
   const client = getOpenAI();
   if (!client) return null;
@@ -51,7 +57,9 @@ async function transcreverAudio(audioUrl) {
   try {
     console.log('[AUDIO-NPL] Baixando áudio:', audioUrl.slice(0, 80));
 
-    const response = await fetch(audioUrl);
+    const response = await fetch(audioUrl, {
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS)
+    });
     if (!response.ok) throw new Error(`Erro ao baixar áudio: ${response.status}`);
 
     const buffer = Buffer.from(await response.arrayBuffer());
@@ -66,6 +74,8 @@ async function transcreverAudio(audioUrl) {
       model: 'whisper-1',
       language: 'pt',
       response_format: 'text'
+    }, {
+      timeout: WHISPER_TIMEOUT_MS
     });
 
     const texto = transcription.trim();
@@ -73,7 +83,11 @@ async function transcreverAudio(audioUrl) {
     return texto;
 
   } catch (e) {
-    console.error('[AUDIO-NPL] Erro na transcrição:', e.message);
+    if (e.name === 'TimeoutError' || e.name === 'AbortError') {
+      console.error('[AUDIO-NPL] Timeout na transcrição:', e.message);
+    } else {
+      console.error('[AUDIO-NPL] Erro na transcrição:', e.message);
+    }
     return null;
   } finally {
     if (tempFile) {
