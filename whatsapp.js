@@ -277,7 +277,9 @@ async function isHorarioComercial() {
     if (calendar.isFeriadoNacional && calendar.isFeriadoNacional(ano, mes, dia)) {
       return false;
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error('[WHATSAPP-NPL] Erro ao checar feriado nacional:', e.message);
+  }
 
   return true;
 }

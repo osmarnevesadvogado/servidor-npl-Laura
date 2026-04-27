@@ -760,7 +760,9 @@ async function generateResponse(history, userMessage, conversaId, lead, contexto
 - Oferta: "${ab.frase_oferta}"
 - Custo: "${ab.frase_custo}"`;
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error('[IA-NPL] Erro ao montar abSection (A/B testing):', e.message);
+  }
 
   const fichaCompleta = `===== FICHA DO LEAD (CONSULTE ANTES DE RESPONDER) =====
 ${fichaLead}

@@ -370,7 +370,9 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       try {
         const conv = await db.getOrCreateConversa(phone);
         await db.saveMessage(conv.id, 'user', combinedText);
-      } catch (e) {}
+      } catch (e) {
+        console.error(`[PAUSE-NPL] Erro ao salvar msg durante pausa (${phone}):`, e.message);
+      }
       return;
     }
 
@@ -414,7 +416,9 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
             await db.updateConversa(conversa.id, { titulo: nomeNovo });
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error(`[CONVERSA-NPL] Erro ao sincronizar titulo da conversa (${phone}):`, e.message);
+      }
     }
 
     // Processar etapa do fluxo
@@ -648,7 +652,9 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
         pauseAI(phone, 120);
         try {
           await db.trackEvent(conversa.id, lead.id, evento, `${lead.nome}: ${combinedText.slice(0, 100)}`);
-        } catch (e) {}
+        } catch (e) {
+          console.error(`[METRIC-NPL] Erro ao registrar evento ${evento} (${phone}):`, e.message);
+        }
       }
     }
 
@@ -661,7 +667,9 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       pauseAI(phone, 120);
       try {
         await db.trackEvent(conversa.id, lead?.id, 'pediu_humano', `Plano B (Laura detectou desconforto): ${reply.slice(0, 150)}`);
-      } catch (e) {}
+      } catch (e) {
+        console.error(`[METRIC-NPL] Erro ao registrar evento pediu_humano (Plano B, ${phone}):`, e.message);
+      }
     }
 
     // Detectar loop de despedida: se últimas 2 respostas da Laura já foram
@@ -916,7 +924,9 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
         const tipos = objDetectadas.map(o => o.tipo).join(',');
         await db.trackEvent(conversa.id, lead.id, 'objecao', tipos);
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error(`[OBJECAO-NPL] Erro ao detectar/registrar objecao (${phone}):`, e.message);
+    }
 
     // Detectar tese e atualizar tese_interesse do lead
     try {
@@ -932,7 +942,9 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
           }
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error(`[TESE-NPL] Erro ao detectar/atualizar tese (${phone}):`, e.message);
+    }
 
     // Pedido de falar com humano/advogado — ampliado pra pegar variações naturais
     const pediuHumano = /(falar com (um |uma |o |a )?(advogad|atendent|pessoa|humano|algu[eé]m|gente)|n[ãa]o quero falar com (a )?ia|quero falar com (um )?humano|quero uma pessoa|prefiro falar com (advogad|humano|pessoa|gente)|tem (advogad|humano|pessoa)|aguardo.{0,20}(contato|retorno).{0,20}advogad|quero.{0,10}advogad|preciso.{0,10}falar.{0,10}advogad|gostaria.{0,20}falar.{0,20}advogad|pode.{0,10}(passar|transferir|chamar).{0,10}(advogad|equipe)|contato.{0,10}(do|da|com).{0,10}advogad)/i.test(combinedText);
@@ -941,7 +953,9 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
       pauseAI(phone, 120);
       try {
         await db.trackEvent(conversa.id, lead?.id, 'pediu_humano', combinedText.slice(0, 100));
-      } catch (e) {}
+      } catch (e) {
+        console.error(`[METRIC-NPL] Erro ao registrar evento pediu_humano (${phone}):`, e.message);
+      }
     }
 
     // Atualizar etapa do funil
@@ -1018,7 +1032,9 @@ async function checkFollowUps() {
         if (jaAgendou && jaAgendou.length > 0) {
           continue; // Pular follow-up — lead já tem consulta marcada
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error(`[FOLLOWUP-NPL] Erro ao verificar consulta_agendada (conv ${conv.id}):`, e.message);
+      }
 
       const lastMsg = lastMsgs[0];
       const hoursAgo = (now - new Date(lastMsg.criado_em).getTime()) / (1000 * 60 * 60);
@@ -1175,7 +1191,11 @@ async function jaEnviado(chave) {
       lembretesCache.set(chave, Date.now());
       return true;
     }
-  } catch (e) {}
+  } catch (e) {
+    // Falha aqui retorna false → lembrete pode duplicar no proximo polling.
+    // Logar pra investigar se tornar recorrente.
+    console.error(`[LEMBRETE-NPL] Erro ao verificar dedup do lembrete '${chave}':`, e.message);
+  }
   return false;
 }
 async function marcarEnviado(chave) {

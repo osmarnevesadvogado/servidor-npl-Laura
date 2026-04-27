@@ -109,7 +109,9 @@ async function getOrCreateLead(phone, nome) {
         try {
           await supabase.from('leads').update({ nome: nome.trim() }).eq('id', lead.id);
           lead.nome = nome.trim();
-        } catch (e) {}
+        } catch (e) {
+          console.error(`[DB-NPL] Erro ao atualizar nome do lead ${lead.id}:`, e.message);
+        }
       }
     }
     return lead;

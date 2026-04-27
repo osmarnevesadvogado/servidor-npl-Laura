@@ -272,7 +272,9 @@ async function getHorariosDisponiveis(diasParaFrente = 5, phoneAtual = null) {
       if (whatsapp.getDiasNaoUteis) {
         diasNaoUteis = await whatsapp.getDiasNaoUteis();
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error('[CALENDAR-NPL] Erro ao buscar dias_nao_uteis (gerar slots):', e.message);
+    }
 
     let tempDate = new Date(Date.UTC(inicioAno, inicioMes, inicioDia));
 
@@ -793,7 +795,9 @@ async function construirSlotDeTexto(texto) {
         return null;
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error('[CALENDAR-NPL] Erro ao buscar dias_nao_uteis (construirSlotDeTexto):', e.message);
+  }
 
   const label = formatarSlot(hora, {
     ano: dataExplicita.ano,
