@@ -27,7 +27,10 @@ O CRM frontend (hospedado no GitHub Pages, repositório `npladvs-crm`) chama dir
 | POST | `/api/enviar` | Enviar texto via WhatsApp `{phone, message, conversaId, usuario_nome}` |
 | POST | `/api/enviar-audio` | Enviar áudio `{phone, audioBase64, conversaId, usuario_nome}` |
 | POST | `/api/enviar-arquivo` | Enviar arquivo `{phone, fileUrl, fileName, mediaType, conversaId, usuario_nome}` |
-| POST | `/api/pausar` | Pausar IA `{phone, minutes}` |
+| POST | `/api/pausar` | Pausar IA por telefone (individual) `{phone, minutes}` |
+| GET | `/api/laura/status` | Status do toggle global `{ ativa }` (sem auth) |
+| POST | `/api/laura/toggle` | Liga/desliga Laura globalmente `{ativa?, usuario_nome?}` |
+| DELETE | `/api/agendamentos/:id` | Excluir agendamento `{marcar_perdido?, motivo?, usuario_nome?}` |
 | POST | `/api/retomar` | Retomar IA `{phone}` |
 | POST | `/api/chat` | Proxy Claude para CRM `{system, messages}` |
 | POST | `/api/documentos/analisar` | Analisar doc via Claude Vision |
