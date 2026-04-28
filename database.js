@@ -973,6 +973,90 @@ async function getWebhookRaw(id) {
   }
 }
 
+// ===== MENSAGENS ORFAS (defesa @lid nao resolvido) =====
+// Quando equipe responde cliente pelo CELULAR vinculado e o @lid nao resolve
+// pra um telefone conhecido, a msg cai aqui em vez de ser descartada.
+// Triagem via /api/admin/mensagens-orfas + atribuicao via POST /atribuir-orfa/:id.
+
+async function salvarMsgOrfa({ chatLid, chatName, content, mediaUrl, mediaType, rawBody, endpoint, instancia }) {
+  try {
+    const { data, error } = await supabase
+      .from('mensagens_orfas')
+      .insert({
+        chat_lid: chatLid,
+        chat_name: chatName || null,
+        content: content || null,
+        media_url: mediaUrl || null,
+        media_type: mediaType || null,
+        raw_body: rawBody || {},
+        endpoint: endpoint || '/webhook/zapi',
+        instancia: instancia || null
+      })
+      .select('id')
+      .single();
+    if (error) {
+      console.error('[ORFA-NPL] Falha ao salvar msg orfa:', error.message);
+      return null;
+    }
+    console.log(`[ORFA-NPL] Msg orfa salva (lid=${chatLid}, name=${chatName}, id=${data.id})`);
+    return data.id;
+  } catch (e) {
+    console.error('[ORFA-NPL] Excecao ao salvar msg orfa:', e.message);
+    return null;
+  }
+}
+
+async function listarMsgsOrfas(limite = 100) {
+  try {
+    const { data } = await supabase
+      .from('mensagens_orfas')
+      .select('id, chat_lid, chat_name, content, media_url, media_type, endpoint, criado_em')
+      .eq('atribuida', false)
+      .order('criado_em', { ascending: false })
+      .limit(limite);
+    return data || [];
+  } catch (e) {
+    console.error('[ORFA-NPL] Erro ao listar:', e.message);
+    return [];
+  }
+}
+
+async function getMsgOrfa(id) {
+  try {
+    const { data } = await supabase
+      .from('mensagens_orfas')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    return data;
+  } catch (e) {
+    console.error(`[ORFA-NPL] Erro ao buscar ${id}:`, e.message);
+    return null;
+  }
+}
+
+async function atribuirMsgOrfa(id, conversaId, usuarioNome) {
+  try {
+    const { error } = await supabase
+      .from('mensagens_orfas')
+      .update({
+        atribuida: true,
+        conversa_id: conversaId,
+        usuario_atribuiu: usuarioNome || 'CRM',
+        atribuida_em: new Date().toISOString()
+      })
+      .eq('id', id);
+    if (error) {
+      console.error(`[ORFA-NPL] Falha ao marcar atribuicao ${id}:`, error.message);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error(`[ORFA-NPL] Excecao ao atribuir ${id}:`, e.message);
+    return false;
+  }
+}
+
 module.exports = {
   supabase,
   getOrCreateConversa,
@@ -986,6 +1070,10 @@ module.exports = {
   marcarWebhookProcessado,
   listarWebhooksFalhados,
   getWebhookRaw,
+  salvarMsgOrfa,
+  listarMsgsOrfas,
+  getMsgOrfa,
+  atribuirMsgOrfa,
   markLeadHot,
   extractAndUpdateLead,
   trackEvent,
