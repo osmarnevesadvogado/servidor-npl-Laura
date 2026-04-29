@@ -179,6 +179,11 @@ setInterval(() => {
   if (jaNotificouHot.size > 1000) jaNotificouHot.clear();
   // pendingClienteVerification: limitar a 500 entradas (leads que deram match com cliente mas nunca confirmaram)
   if (pendingClienteVerification.size > 500) pendingClienteVerification.clear();
+  // recebendoDocumentos: remover entradas com janela ja expirada (TTL fora da janela)
+  const agora = Date.now();
+  for (const [phone, ts] of recebendoDocumentos) {
+    if (agora - ts > RECEBENDO_DOCS_JANELA_MS) recebendoDocumentos.delete(phone);
+  }
 }, 10 * 60 * 1000);
 
 // ===== CONTROLE DE NOTIFICAÇÃO DE LEAD QUENTE =====
@@ -206,6 +211,14 @@ const agendamentoLock = new Set(); // phones em processo de agendamento
 // Evita enviar apresentação + credibilidade 2x quando lead manda msgs em paralelo.
 // Chave = phone limpo. Limpa junto com outros caches.
 const primeiroContatoEnviado = new Set();
+
+// ===== MODO DOCUMENTOS (silencioso quando lead esta em fase de envio de docs) =====
+// Cache phone -> timestamp da ultima confirmacao enviada. Se lead em etapa
+// 'documentos' manda mais doc dentro de RECEBENDO_DOCS_JANELA_MS, Laura fica
+// silenciosa (so salva no banco e registra metrica). Se janela expirou, manda
+// nova confirmacao curta. UX: cliente recebe 1 sinal de "tô vendo" e depois cala.
+const recebendoDocumentos = new Map();
+const RECEBENDO_DOCS_JANELA_MS = 15 * 60 * 1000; // 15 min
 
 // ===== TOGGLE GLOBAL DA LAURA =====
 // Controle on/off de toda a IA pra equipe assumir o atendimento manual em horarios
@@ -546,6 +559,65 @@ async function processBufferedMessage(phone, text, senderName, respondComAudio =
         }
       } catch (e) {
         console.error(`[CONVERSA-NPL] Erro ao sincronizar titulo da conversa (${phone}):`, e.message);
+      }
+    }
+
+    // ===== MODO DOCUMENTOS — silêncio quando lead em fase de envio =====
+    // Cliente em etapa 'documentos' enviando arquivo (sem pergunta clara) NAO
+    // deve receber resposta a cada arquivo. Confirma uma vez por janela de 15min
+    // e depois cala. Texto significativo (pergunta/duvida) sempre responde normal.
+    if (lead?.etapa_funil === 'documentos') {
+      // Mensagem eh "so midia"? O webhook de midia monta texto como
+      // "[Lead enviou uma imagem]" ou "[Lead enviou um documento (file.pdf). Conteudo extraido:...]"
+      const ehSoMidia = /^\[Lead enviou /i.test(combinedText);
+      // Texto significativo = pergunta clara ou explicacao longa
+      const ehTextoSignificativo = !ehSoMidia && (
+        combinedText.length > 40 ||
+        /[?!]/.test(combinedText) ||
+        /\b(pergunt|d[uú]vida|quando|onde|como|porque|por que|quanto|qual)\b/i.test(combinedText)
+      );
+
+      if (ehSoMidia && !ehTextoSignificativo) {
+        const cleanP = whatsapp.cleanPhone(phone);
+        const ultimaConfirmacao = recebendoDocumentos.get(cleanP) || 0;
+        const dentroDaJanela = (Date.now() - ultimaConfirmacao) < RECEBENDO_DOCS_JANELA_MS;
+
+        // Salva metrica do documento recebido (auditoria) — sempre
+        try {
+          // Extrai media_type/url do trecho "[Lead enviou X]" — info simples pra metrica
+          const tipoMatch = combinedText.match(/Lead enviou (uma imagem|um documento|um audio|um v[ií]deo)/i);
+          const tipoDoc = tipoMatch ? tipoMatch[1] : 'midia';
+          await db.trackEvent(conversa.id, lead.id, 'documento_recebido', tipoDoc);
+        } catch (e) {
+          console.error(`[DOCS-MODE] Erro ao tracker documento_recebido:`, e.message);
+        }
+
+        if (dentroDaJanela) {
+          // 2a+ doc na janela — silenciosa
+          console.log(`[DOCS-MODE] ${phone} em modo documentos — silêncio (msg ${Math.floor((Date.now() - ultimaConfirmacao)/1000)}s apos a 1a)`);
+          recebendoDocumentos.set(cleanP, Date.now()); // estende a janela
+          return;
+        } else {
+          // 1a doc da janela — confirmacao curta hardcoded (sem chamar Claude — economia)
+          const nome = (lead.nome && !lead.nome.startsWith('WhatsApp') && !/^\+?\(?\d/.test(lead.nome))
+            ? lead.nome.split(' ')[0]
+            : 'amigo(a)';
+          const msgConfirmacao = `Perfeito, ${nome}! Recebi. Pode mandar os outros documentos que precisar — registro tudo pra equipe.\n\n_Laura — Assistente Virtual (IA) | Escritorio NPL_`;
+          try {
+            await whatsapp.sendText(phone, msgConfirmacao, instancia);
+            await db.saveMessage(conversa.id, 'assistant', msgConfirmacao);
+            recebendoDocumentos.set(cleanP, Date.now());
+            console.log(`[DOCS-MODE] ${phone} em modo documentos — confirmacao enviada (1a da janela)`);
+          } catch (e) {
+            console.error(`[DOCS-MODE] Erro ao enviar confirmacao:`, e.message);
+          }
+          return;
+        }
+      }
+      // Se chegou aqui (texto significativo em modo documentos), reseta janela e segue
+      // pro flow normal pra Laura responder a pergunta
+      if (ehTextoSignificativo) {
+        recebendoDocumentos.delete(whatsapp.cleanPhone(phone));
       }
     }
 
