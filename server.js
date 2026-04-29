@@ -361,6 +361,41 @@ async function resolverLidParaPhone(chatLid, chatName) {
         console.log(`[LID-MAP] Resolvido por nome: ${chatLid} -> ${matches[0].telefone} (${chatName})`);
         return matches[0].telefone;
       }
+
+      // 3. FALLBACK: match por PRIMEIRO NOME (cobre caso "Paulo Drogasil" no
+      // celular vs "Paulo Roberto Nascimento" no banco). So aceita se houver
+      // EXATAMENTE 1 match — em caso de ambiguidade, deixa cair em mensagem
+      // orfa pra triagem manual.
+      const palavras = nomeNormalizado.split(/\s+/).filter(p => p.length >= 3);
+      if (palavras.length === 0) return null;
+      const primeira = palavras[0].toLowerCase();
+      // Pula nomes muito comuns quando so tem 1 palavra (alto risco de match errado)
+      const NOMES_MUITO_COMUNS = ['joao', 'maria', 'jose', 'ana', 'paulo', 'carlos', 'antonio', 'francisco', 'pedro', 'lucas', 'marcos', 'luiz', 'rafael', 'daniel'];
+      if (NOMES_MUITO_COMUNS.includes(primeira) && palavras.length === 1) {
+        return null;
+      }
+      // Buscar conversas cujo titulo COMECE com essa palavra (evita match no
+      // meio de outra palavra). Como ilike eh case-insensitive, basta a versao lower.
+      const { data: data2 } = await db.supabase
+        .from('conversas')
+        .select('telefone, titulo')
+        .eq('escritorio', config.ESCRITORIO)
+        .ilike('titulo', `${primeira}%`)
+        .limit(10);
+      const matches2 = (data2 || []).filter(c => {
+        if (!c.titulo) return false;
+        const tituloNorm = c.titulo.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+        const primeiraTitulo = tituloNorm.split(/\s+/)[0] || '';
+        return primeiraTitulo === primeira;
+      });
+      if (matches2.length === 1 && matches2[0].telefone) {
+        lidPhoneMap.set(chatLid, matches2[0].telefone);
+        console.log(`[LID-MAP] Resolvido por primeiro nome: ${chatLid} -> ${matches2[0].telefone} (chatName="${chatName}", banco="${matches2[0].titulo}")`);
+        return matches2[0].telefone;
+      }
+      if (matches2.length > 1) {
+        console.warn(`[LID-MAP] Ambiguidade no primeiro nome "${primeira}" (${matches2.length} candidatos) — cairia em msg orfa`);
+      }
     } catch (e) {
       console.log('[LID-MAP] Erro match por nome:', e.message);
     }
@@ -1757,8 +1792,27 @@ app.post('/webhook/zapi', async (req, res) => {
       }
 
       if (!phone) {
-        console.log(`[MANUAL-NPL] fromMe nao resolveu telefone: chatLid=${chatLid} chatName="${chatName}" — ignorando`);
-        return res.json({ status: 'fromme_lid_unresolved' });
+        // @lid nao resolvido — em vez de DESCARTAR, salva como mensagem orfa
+        // pra triagem manual via /api/admin/mensagens-orfas. Evita perda do
+        // conteudo (PR #49 ja garante o raw, isso facilita a recuperacao).
+        try {
+          const { text: orfaText, mediaUrl: orfaMediaUrl, mediaType: orfaMediaType } = extrairTextoEMidia(body);
+          const orfaContent = orfaText || (orfaMediaType ? `[${orfaMediaType}]` : (body.text?.message || body.body || ''));
+          await db.salvarMsgOrfa({
+            chatLid,
+            chatName,
+            content: orfaContent,
+            mediaUrl: orfaMediaUrl,
+            mediaType: orfaMediaType,
+            rawBody: body,
+            endpoint: '/webhook/zapi',
+            instancia
+          });
+        } catch (e) {
+          console.error(`[MANUAL-NPL] Erro ao salvar como orfa (lid=${chatLid}):`, e.message);
+        }
+        console.log(`[MANUAL-NPL] fromMe nao resolveu telefone: chatLid=${chatLid} chatName="${chatName}" — salvo como msg orfa pra triagem`);
+        return res.json({ status: 'fromme_lid_unresolved_saved_as_orfa' });
       }
 
       // Fast path: servidor/Laura acabou de enviar (60s) — ignorar echo
@@ -3267,6 +3321,110 @@ app.post('/api/admin/reprocessar-webhook/:id', requireApiKey, async (req, res) =
   } catch (e) {
     console.error('[WEBHOOK-RAW] Erro ao reprocessar:', e.message);
     res.status(500).json({ error: 'Erro ao reprocessar', detalhe: e.message });
+  }
+});
+
+// ===== ADMIN: MENSAGENS ORFAS =====
+// Lista pendentes de triagem (msgs da equipe via celular cujo @lid nao resolveu).
+app.get('/api/admin/mensagens-orfas', requireApiKey, async (req, res) => {
+  try {
+    const limite = parseInt(req.query.limite) || 100;
+    const orfas = await db.listarMsgsOrfas(limite);
+    // Agrupa por chatLid pra facilitar a triagem (todas msgs do mesmo @lid juntas)
+    const porLid = {};
+    for (const o of orfas) {
+      if (!porLid[o.chat_lid]) porLid[o.chat_lid] = { chat_lid: o.chat_lid, chat_name: o.chat_name, msgs: [] };
+      porLid[o.chat_lid].msgs.push({
+        id: o.id,
+        content: o.content,
+        media_url: o.media_url,
+        media_type: o.media_type,
+        endpoint: o.endpoint,
+        criado_em: o.criado_em
+      });
+    }
+    res.json({
+      ok: true,
+      total: orfas.length,
+      grupos: Object.values(porLid),
+      pendentes: orfas
+    });
+  } catch (e) {
+    console.error('[ORFA-NPL] Erro listar:', e.message);
+    res.status(500).json({ error: 'Erro ao listar orfas' });
+  }
+});
+
+// Atribui uma msg orfa a uma conversa pelo telefone do cliente.
+// Body: { phone, usuario_nome?, atribuir_todas_do_lid? (default true) }
+// - Insere a msg na tabela `mensagens` com manual=true e usuario_nome
+// - Marca a orfa como atribuida=true
+// - Popula lidPhoneMap em memoria → proximas msgs daquele @lid resolvem auto
+// - Se atribuir_todas_do_lid=true (default), pega todas as outras msgs orfas
+//   com o mesmo chat_lid e tambem move pra mesma conversa
+app.post('/api/admin/atribuir-orfa/:id', requireApiKey, async (req, res) => {
+  try {
+    const { phone, usuario_nome, atribuir_todas_do_lid = true } = req.body || {};
+    if (!phone) return res.status(400).json({ error: 'phone obrigatorio' });
+
+    const orfa = await db.getMsgOrfa(req.params.id);
+    if (!orfa) return res.status(404).json({ error: 'msg orfa nao encontrada' });
+    if (orfa.atribuida) return res.status(400).json({ error: 'msg ja atribuida' });
+
+    const phoneLimpo = whatsapp.cleanPhone(phone);
+    const conversa = await db.getOrCreateConversa(phoneLimpo);
+    if (!conversa) return res.status(500).json({ error: 'falha ao obter conversa do phone' });
+
+    // Lista de orfas a atribuir (a especificada + opcionalmente todas do mesmo lid)
+    let alvos = [orfa];
+    if (atribuir_todas_do_lid && orfa.chat_lid) {
+      const { data: irmas } = await db.supabase
+        .from('mensagens_orfas')
+        .select('*')
+        .eq('chat_lid', orfa.chat_lid)
+        .eq('atribuida', false)
+        .neq('id', orfa.id);
+      alvos = [orfa, ...(irmas || [])];
+    }
+
+    let inseridas = 0;
+    let falhadas = 0;
+    for (const a of alvos) {
+      try {
+        const extras = { manual: true };
+        if (a.usuario_atribuiu) extras.usuario_nome = a.usuario_atribuiu;
+        else if (usuario_nome) extras.usuario_nome = usuario_nome;
+        if (a.media_url) extras.media_url = a.media_url;
+        if (a.media_type) extras.media_type = a.media_type;
+        if (a.criado_em) extras.criado_em = a.criado_em;
+        const finalContent = a.content || `[${a.media_type || 'mídia'}]`;
+        await db.saveMessage(conversa.id, 'assistant', finalContent, extras);
+        await db.atribuirMsgOrfa(a.id, conversa.id, usuario_nome || 'CRM');
+        inseridas++;
+      } catch (e) {
+        console.error(`[ORFA-NPL] Falha ao mover orfa ${a.id}:`, e.message);
+        falhadas++;
+      }
+    }
+
+    // Popula lidPhoneMap em memoria pra proximas msgs daquele lid resolverem auto
+    if (orfa.chat_lid) {
+      lidPhoneMap.set(orfa.chat_lid, phoneLimpo);
+      console.log(`[LID-MAP] Populado via atribuicao manual: ${orfa.chat_lid} -> ${phoneLimpo}`);
+    }
+
+    res.json({
+      ok: true,
+      conversa_id: conversa.id,
+      phone: phoneLimpo,
+      atribuir_todas_do_lid,
+      total_alvos: alvos.length,
+      inseridas,
+      falhadas
+    });
+  } catch (e) {
+    console.error('[ORFA-NPL] Erro atribuir:', e.message);
+    res.status(500).json({ error: 'Erro ao atribuir orfa', detalhe: e.message });
   }
 });
 
